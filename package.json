@@ -1,0 +1,25 @@
+{
+  "name": "rn-build-upload",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build a React Native release APK/IPA (staging or production) and upload it to BetaDrop, then copy the share message to the clipboard.",
+  "license": "UNLICENSED",
+  "bin": {
+    "rn-build-upload": "bin/rn-build-upload.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Prince-BITNET/rn-build-upload.git"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1"
+  }
+}
