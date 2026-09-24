@@ -5,6 +5,7 @@
   "description": "Build a React Native release APK/IPA (staging or production) and upload it to BetaDrop, then copy the share message to the clipboard.",
   "license": "UNLICENSED",
   "bin": {
+    "ship": "bin/rn-build-upload.js",
     "rn-build-upload": "bin/rn-build-upload.js"
   },
   "files": [

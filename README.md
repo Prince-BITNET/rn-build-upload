@@ -1,7 +1,9 @@
-# rn-build-upload
+# rn-build-upload → `ship`
 
 Build a React Native **release APK / IPA** (staging or production) and upload it to
 [BetaDrop](https://betadrop.app), then copy the share message to the clipboard.
+
+Installs the short `ship` command (`rn-build-upload` stays available as an alias).
 
 One command, asks for the platform first — Android or iOS — then the environment —
 Staging or Production.
@@ -31,6 +33,8 @@ Staging or Production.
 npm i -g github:Prince-BITNET/rn-build-upload
 ```
 
+This installs `ship` (and the `rn-build-upload` alias).
+
 One-time BetaDrop auth (pick one):
 
 ```bash
@@ -43,10 +47,10 @@ export BETADROP_TOKEN=bd_live_xxxx      # or a token from betadrop.app -> Settin
 Run it from anywhere inside a project:
 
 ```bash
-rn-build-upload                       # ask platform, then environment
-rn-build-upload --platform ios        # skip the platform question
-rn-build-upload --platform android --uat --ci   # non-interactive (CI)
-rn-build-upload --check               # show what the tool detects, build nothing
+ship                                  # ask platform, then environment
+ship --platform ios                   # skip the platform question
+ship --platform android --uat --ci    # non-interactive (CI)
+ship --check                          # show what the tool detects, build nothing
 ```
 
 | Flag | Meaning |
@@ -62,13 +66,14 @@ Per-project convenience scripts (optional):
 ```json
 {
   "scripts": {
+    "ship": "rn-build-upload",
     "build": "rn-build-upload",
     "androidBuild": "rn-build-upload --platform android"
   }
 }
 ```
 
-Then `bun run build` / `npm run build` (note: `bun build` alone is Bun's bundler).
+Then `bun ship` / `npm run ship` (note: `bun build` alone is Bun's bundler).
 
 ## What it detects (no config file)
 

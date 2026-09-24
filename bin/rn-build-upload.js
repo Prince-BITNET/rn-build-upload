@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * rn-build-upload — build a React Native release APK/IPA and upload it to BetaDrop.
+ * ship — build a React Native release APK/IPA and upload it to BetaDrop.
+ * (Installed as `ship`, with `rn-build-upload` as an alias.)
  *
  * Usage:
- *   rn-build-upload [--platform android|ios] [--uat | --prod] [--verbose] [--ci] [--check]
+ *   ship [--platform android|ios] [--uat | --prod] [--verbose] [--ci] [--check]
  *
  *     no flags   Ask which platform (Android / iOS) first, then which environment
  *     --platform android|ios  Skip the platform prompt
@@ -19,7 +20,7 @@
  * 7-day link expiry -> Markdown -> pbcopy.
  *
  * Per-project convenience scripts, e.g.:
- *   "build": "rn-build-upload",
+ *   "ship": "rn-build-upload",
  *   "androidBuild": "rn-build-upload --platform android"
  *
  * One-time setup per machine:
@@ -44,7 +45,7 @@ const { createAndroidAdapter } = require('../lib/platforms/android');
 const { createIosAdapter } = require('../lib/platforms/ios');
 
 const ENTRY = {
-  command: 'rn-build-upload',
+  command: 'ship',
   label: null,
   allowPlatform: true,
   verboseHint: 'Stream the full build output (default shows a compact live view)',
