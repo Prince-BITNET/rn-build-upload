@@ -16,8 +16,9 @@
  *
  * Flow: detect the project -> set isUAT in src/Helper/APPConfig.js (restored
  * after the build, even on Ctrl+C) -> build (Gradle release APK or Xcode
- * release IPA via the release-* scheme) -> `betadrop publish --ci` with a
- * 7-day link expiry -> Markdown -> pbcopy.
+ * release IPA via the release-* scheme) -> `betadrop publish` with live upload
+ * progress and a 7-day link expiry (`--ci` keeps line-oriented output) ->
+ * Markdown -> pbcopy.
  *
  * Per-project convenience scripts, e.g.:
  *   "ship": "rn-build-upload",

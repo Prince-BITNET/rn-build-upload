@@ -92,8 +92,12 @@ first run in a project.
 
 ## Behaviour
 
-- Uploads through `npx -y @betadrop/cli publish --ci`, so the install link is
-  printed on the last stdout line; the **link expires after 7 days**.
+- Uploads through the official `npx -y @betadrop/cli publish`, mirroring the
+  CLI's own progress bar live (percentage, MB sent, speed) and switching to
+  "Processing on BetaDrop…" while the server finalizes the build; the
+  **link expires after 7 days**.
+- `--ci` keeps the machine contract instead: no spinners, install link as the
+  last stdout line.
 - The build label/notes come from the detected app label, e.g.
   `AlfaPTE Android Staging Build — v8.5 (build 193)`.
 - The share message copied to the clipboard is
