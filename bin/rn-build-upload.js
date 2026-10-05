@@ -4,20 +4,21 @@
  * (Installed as `ship`, with `rn-build-upload` as an alias.)
  *
  * Usage:
- *   ship [--platform android|ios] [--uat | --prod] [--verbose] [--ci] [--check]
+ *   ship [--platform android|ios] [--uat | --prod] [--provider betadrop|shareipa] [--verbose] [--ci] [--check]
  *
  *     no flags   Ask which platform (Android / iOS) first, then which environment
  *     --platform android|ios  Skip the platform prompt
  *     --uat      Stag backend (isUAT=true)
  *     --prod     Prod backend (isUAT=false)
+ *     --provider betadrop|shareipa  Upload provider (default: betadrop)
  *     --verbose  Stream the full build output (default shows a compact live view)
  *     --ci       Plain non-interactive output for scripts/CI (requires --platform)
  *     --check    Print the detected project profile and exit (no build, no upload)
  *
  * Flow: detect the project -> set isUAT in src/Helper/APPConfig.js (restored
  * after the build, even on Ctrl+C) -> build (Gradle release APK or Xcode
- * release IPA via the release-* scheme) -> `betadrop publish` with live upload
- * progress and a 7-day link expiry (`--ci` keeps line-oriented output) ->
+ * release IPA via the release-* scheme) -> upload (BetaDrop by default;
+ * ShareIPA with --provider shareipa; both with live upload progress) ->
  * Markdown -> pbcopy.
  *
  * Per-project convenience scripts, e.g.:
@@ -164,6 +165,7 @@ async function main() {
     verbose: parsed.verbose,
     ci: parsed.ci,
     introShown: !parsed.ci,
+    provider: parsed.provider,
   });
 }
 

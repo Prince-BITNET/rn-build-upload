@@ -2,8 +2,11 @@
   "name": "rn-build-upload",
   "version": "1.0.0",
   "private": true,
-  "description": "Build a React Native release APK/IPA (staging or production) and upload it to BetaDrop, then copy the share message to the clipboard.",
+  "description": "Build a React Native release APK/IPA (staging or production) and upload it to BetaDrop or ShareIPA, then copy the share message to the clipboard.",
   "license": "UNLICENSED",
+  "scripts": {
+    "test": "node --test"
+  },
   "bin": {
     "ship": "bin/rn-build-upload.js",
     "rn-build-upload": "bin/rn-build-upload.js"
