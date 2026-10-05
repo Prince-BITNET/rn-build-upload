@@ -10,15 +10,15 @@
  *     --platform android|ios  Skip the platform prompt
  *     --uat      Stag backend (isUAT=true)
  *     --prod     Prod backend (isUAT=false)
- *     --provider betadrop|shareipa  Upload provider (default: betadrop)
+ *     --provider shareipa|betadrop  Upload provider (default: shareipa)
  *     --verbose  Stream the full build output (default shows a compact live view)
  *     --ci       Plain non-interactive output for scripts/CI (requires --platform)
  *     --check    Print the detected project profile and exit (no build, no upload)
  *
  * Flow: detect the project -> set isUAT in src/Helper/APPConfig.js (restored
  * after the build, even on Ctrl+C) -> build (Gradle release APK or Xcode
- * release IPA via the release-* scheme) -> upload (BetaDrop by default;
- * ShareIPA with --provider shareipa; both with live upload progress) ->
+ * release IPA via the release-* scheme) -> upload (ShareIPA by default;
+ * BetaDrop with --provider betadrop; both with live upload progress) ->
  * Markdown -> pbcopy.
  *
  * Per-project convenience scripts, e.g.:
@@ -27,7 +27,11 @@
  *
  * One-time setup per machine:
  *   npm i -g github:Prince-BITNET/rn-build-upload
- *   npx -y @betadrop/cli login     (or export BETADROP_TOKEN=bd_live_xxxx)
+ *
+ * ShareIPA (the default) needs no setup at all. BetaDrop (--provider
+ * betadrop) needs one of:
+ *   npx -y @betadrop/cli login                      (interactive, recommended)
+ *   export BETADROP_TOKEN=bd_live_xxxx              (token from betadrop.app)
  */
 
 const { detectProject } = require('../lib/detect');

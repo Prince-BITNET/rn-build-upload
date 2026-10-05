@@ -1,8 +1,9 @@
 # rn-build-upload → `ship`
 
 Build a React Native **release APK / IPA** (staging or production) and upload it to
-[BetaDrop](https://betadrop.app) (default) or [ShareIPA](https://www.shareipa.com)
-(with `--provider shareipa`), then copy the share message to the clipboard.
+[ShareIPA](https://www.shareipa.com) (the default — no setup) or
+[BetaDrop](https://betadrop.app) (with `--provider betadrop`), then copy the
+share message to the clipboard.
 
 Installs the short `ship` command (`rn-build-upload` stays available as an alias).
 
@@ -36,7 +37,8 @@ npm i -g github:Prince-BITNET/rn-build-upload
 
 This installs `ship` (and the `rn-build-upload` alias).
 
-One-time BetaDrop auth (pick one):
+Nothing else is needed for the default provider (ShareIPA). BetaDrop
+(`--provider betadrop`) needs one-time auth (pick one):
 
 ```bash
 npx -y @betadrop/cli login              # interactive, recommended locally
@@ -48,10 +50,10 @@ export BETADROP_TOKEN=bd_live_xxxx      # or a token from betadrop.app -> Settin
 Run it from anywhere inside a project:
 
 ```bash
-ship                                  # ask platform, then environment
+ship                                  # ask platform, then environment (ShareIPA by default)
 ship --platform ios                   # skip the platform question
 ship --platform android --uat --ci    # non-interactive (CI)
-ship --platform ios --prod --provider shareipa   # upload to ShareIPA
+ship --platform android --uat --provider betadrop   # upload to BetaDrop instead
 ship --check                          # show what the tool detects, build nothing
 ```
 
@@ -59,7 +61,7 @@ ship --check                          # show what the tool detects, build nothin
 | --- | --- |
 | `--platform android\|ios` | Skip the platform prompt (required with `--ci`) |
 | `--uat` / `--prod` | Staging (`isUAT=true`) / Production (`isUAT=false`) backend |
-| `--provider betadrop\|shareipa` | Upload provider (default: `betadrop`) |
+| `--provider shareipa\|betadrop` | Upload provider — `shareipa` (default) or `betadrop` |
 | `--verbose` | Stream the full Gradle / xcodebuild output |
 | `--ci` | Plain, line-oriented output for scripts and CI |
 | `--check` | Print the detected project profile and exit |
@@ -80,17 +82,15 @@ Then `bun ship` / `npm run ship` (note: `bun build` alone is Bun's bundler).
 
 ## Upload providers
 
+`ship` uses **ShareIPA** unless `--provider betadrop` is given; `--provider shareipa`
+is also accepted and means the same as the default.
+
 | Provider | Setup | Upload |
 | --- | --- | --- |
-| `betadrop` (default) | one-time `npx -y @betadrop/cli login` (or `BETADROP_TOKEN`) | official CLI, official API |
-| `shareipa` | none | ShareIPA website flow, **unofficial** |
+| `shareipa` (default) | none | ShareIPA website flow, **unofficial** |
+| `betadrop` | one-time `npx -y @betadrop/cli login` (or `BETADROP_TOKEN`) | official CLI, official API |
 
-### BetaDrop (default)
-
-Uploads through `npx -y @betadrop/cli publish` and mirrors the CLI's own
-progress bar live. No change from previous versions.
-
-### ShareIPA (`--provider shareipa`)
+### ShareIPA (default)
 
 Uploads through the same public website flow the ShareIPA browser UI uses —
 no account, no login, no token to configure:
@@ -121,6 +121,12 @@ links expire after **7 days** (max upload 250 MB). A failed upload is retried
 once with a fresh signed URL; a successful upload whose registration fails is
 never silently re-sent.
 
+### BetaDrop (`--provider betadrop`)
+
+Uploads through the official `npx -y @betadrop/cli publish` and mirrors the
+CLI's own progress bar live. Behaviour is unchanged from previous versions;
+select it with `--provider betadrop` (one-time auth above).
+
 ## What it detects (no config file)
 
 | Thing | Convention |
@@ -138,13 +144,13 @@ first run in a project.
 
 ## Behaviour
 
-- BetaDrop uploads through the official `npx -y @betadrop/cli publish`,
-  mirroring the CLI's own progress bar live (percentage, MB sent, speed) and
-  switching to "Processing on BetaDrop…" while the server finalizes the build;
-  the **link expires after 7 days**.
-- ShareIPA (`--provider shareipa`) shows the same live bar with real byte
-  progress from its direct HTTP PUT, switches to "Processing on ShareIPA…"
-  while the build is registered, and produces a 7-day install link.
+- ShareIPA (the default) shows a live bar with real byte progress from its
+  direct HTTP PUT, switches to "Processing on ShareIPA…" while the build is
+  registered, and produces a 7-day install link.
+- BetaDrop (`--provider betadrop`) uploads through the official
+  `npx -y @betadrop/cli publish`, mirroring the CLI's own progress bar live
+  (percentage, MB sent, speed) and switching to "Processing on BetaDrop…"
+  while the server finalizes the build; the **link expires after 7 days**.
 - `--ci` keeps the machine contract instead: no spinners, install link as the
   last stdout line.
 - The build label/notes come from the detected app label, e.g.

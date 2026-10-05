@@ -1,28 +1,38 @@
 /**
- * CLI wiring tests: --provider parsing and the --ci (plain) output contract.
+ * CLI wiring tests: provider selection/parsing and the --ci (plain) output
+ * contract.
  *
- * The provider itself is stubbed — these tests verify the core passes the
- * right options through and keeps the line-oriented CI contract intact.
+ * The providers themselves are stubbed — these tests verify the core
+ * dispatches to the right provider and keeps the line-oriented CI contract
+ * intact.
  */
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
-const { parseArgs, runPlain, PROVIDERS, ENVS, StepError } = require('../lib/build-upload');
+const { parseArgs, runPlain, PROVIDERS, DEFAULT_PROVIDER, ENVS, StepError } = require('../lib/build-upload');
 
 /* ---------------------------------------------------------------- */
 /* --provider parsing                                                */
 /* ---------------------------------------------------------------- */
 
-test('parseArgs defaults to the betadrop provider', () => {
-  assert.equal(parseArgs([], { allowPlatform: true }).provider, 'betadrop');
-  assert.equal(parseArgs(['--platform', 'android', '--uat'], { allowPlatform: true }).provider, 'betadrop');
+test('parseArgs defaults to the ShareIPA provider (single source of truth)', () => {
+  assert.equal(DEFAULT_PROVIDER, 'shareipa');
+  assert.equal(parseArgs([], { allowPlatform: true }).provider, DEFAULT_PROVIDER);
+  assert.equal(parseArgs(['--platform', 'android', '--uat'], { allowPlatform: true }).provider, 'shareipa');
+  assert.equal(parseArgs(['--ci'], { allowPlatform: true }).provider, 'shareipa');
 });
 
 test('parseArgs accepts --provider shareipa in both forms, case-insensitively', () => {
   assert.equal(parseArgs(['--provider', 'shareipa'], { allowPlatform: true }).provider, 'shareipa');
   assert.equal(parseArgs(['--provider=SHAREIPA'], { allowPlatform: true }).provider, 'shareipa');
   assert.equal(parseArgs(['--provider', 'ShareIPA', '--ci'], { allowPlatform: true }).provider, 'shareipa');
+});
+
+test('parseArgs accepts --provider betadrop in both forms, case-insensitively', () => {
+  assert.equal(parseArgs(['--provider', 'betadrop'], { allowPlatform: true }).provider, 'betadrop');
+  assert.equal(parseArgs(['--provider=betadrop'], { allowPlatform: true }).provider, 'betadrop');
+  assert.equal(parseArgs(['--provider', 'BetaDrop', '--ci'], { allowPlatform: true }).provider, 'betadrop');
 });
 
 test('parseArgs rejects unknown and missing provider values as usage errors', () => {
@@ -125,15 +135,9 @@ test('runPlain --ci keeps line-oriented output and routes through the selected p
   }
 });
 
-test('runPlain still defaults to BetaDrop when no provider is given', async () => {
-  const calls = [];
-  const original = PROVIDERS.betadrop.upload;
-  PROVIDERS.betadrop.upload = async (profile, filePath, name, notes, opts) => {
-    calls.push({ name, notes, opts });
-    return { url: 'https://betadrop.app/i/TESTID', timing: null };
-  };
-
-  const adapter = {
+/** Minimal iOS adapter stub used by the provider-dispatch tests. */
+function iosAdapter() {
+  return {
     appName: 'DemoApp',
     label: 'iOS',
     artifactWord: 'IPA',
@@ -145,10 +149,19 @@ test('runPlain still defaults to BetaDrop when no provider is given', async () =
       return { file: { name: 'app.ipa', fullPath: '/tmp/demo-project/app.ipa', size: 1024 }, fallback: false };
     },
   };
+}
+
+test('runPlain uses ShareIPA (the default) when no provider is given', async () => {
+  const calls = [];
+  const original = PROVIDERS.shareipa.upload;
+  PROVIDERS.shareipa.upload = async (profile, filePath, name, notes, opts) => {
+    calls.push({ name, notes, opts });
+    return { url: 'https://install.shareipa.com/TESTID', timing: { transferMs: 5, serverMs: 1 } };
+  };
 
   try {
-    const { stdout } = await captureConsole(() =>
-      runPlain(adapter, {
+    const { stdout, stderr } = await captureConsole(() =>
+      runPlain(iosAdapter(), {
         env: ENVS['--prod'],
         verbose: false,
         version: { versionName: '1.0', versionCode: '1' },
@@ -159,8 +172,45 @@ test('runPlain still defaults to BetaDrop when no provider is given', async () =
       }),
     );
     const out = stdout.join('\n');
+    assert.match(out, /Uploading to ShareIPA\.\.\./);
+    assert.ok(out.includes('DemoApp: [iOS Prod Build](https://install.shareipa.com/TESTID)'));
+    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
+    assert.equal(stderr.join(''), '');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.ci, true);
+  } finally {
+    PROVIDERS.shareipa.upload = original;
+  }
+});
+
+test('runPlain --ci --provider betadrop uses BetaDrop and keeps the line-oriented contract', async () => {
+  const calls = [];
+  const original = PROVIDERS.betadrop.upload;
+  PROVIDERS.betadrop.upload = async (profile, filePath, name, notes, opts) => {
+    calls.push({ name, notes, opts });
+    return { url: 'https://betadrop.app/i/TESTID', timing: null };
+  };
+
+  try {
+    const { stdout, stderr } = await captureConsole(() =>
+      runPlain(iosAdapter(), {
+        env: ENVS['--prod'],
+        verbose: false,
+        version: { versionName: '1.0', versionCode: '1' },
+        notes: 'DemoApp iOS Production Build',
+        backend: { restore() {} },
+        finishRestore() {},
+        startedAt: Date.now(),
+        provider: 'betadrop',
+      }),
+    );
+    const out = stdout.join('\n');
     assert.match(out, /Uploading to BetaDrop\.\.\./);
-    assert.ok(out.includes('https://betadrop.app/i/TESTID'));
+    assert.ok(out.includes('DemoApp: [iOS Prod Build](https://betadrop.app/i/TESTID)'));
+    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
+    assert.equal(stderr.join(''), '');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].opts.ci, true);
   } finally {
