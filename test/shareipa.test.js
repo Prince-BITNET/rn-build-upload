@@ -317,10 +317,14 @@ test('saveApp posts the payload with Bearer + browser-id and extracts the ids', 
 
 test('saveApp never leaks the token or presigned URL in errors', async () => {
   const noisyBody = JSON.stringify({ msg: `bad save for Bearer ${TOKEN} -> ${PRESIGNED_URL}` });
-  const fetchImpl = fakeFetch([fakeResponse(500, noisyBody)]);
+  const fetchImpl = fakeFetch([
+    fakeResponse(500, noisyBody),
+    fakeResponse(500, noisyBody),
+    fakeResponse(500, noisyBody),
+  ]);
   const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
   await assert.rejects(
-    () => saveApp({ fetchImpl, apiBase: API_BASE, signed }),
+    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1, 1] }),
     (err) => {
       const dump = `${err.message}\n${err.details}\n${err.hint}`;
       assert.ok(err instanceof StepError);
@@ -330,13 +334,64 @@ test('saveApp never leaks the token or presigned URL in errors', async () => {
       return /could not register/i.test(err.message) && /HTTP 500/.test(err.details);
     },
   );
+  assert.equal(fetchImpl.calls.length, 3, 'transient 500s are retried before giving up');
+});
+
+test('saveApp retries transient failures instead of wasting the upload', async () => {
+  const fetchImpl = fakeFetch([
+    fakeResponse(404, '<html><body>404 Not Found</body></html>'),
+    fakeResponse(404, '<html><body>404 Not Found</body></html>'),
+    fakeResponse(201, { admin_id: 'ADMIN1', install_id: 'abc123' }),
+  ]);
+  const retries = [];
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  const saved = await saveApp({
+    fetchImpl,
+    apiBase: API_BASE,
+    signed,
+    retryDelaysMs: [1, 1],
+    onRetry: (info) => retries.push(info),
+  });
+
+  assert.equal(saved.installId, 'abc123');
+  assert.equal(fetchImpl.calls.length, 3);
+  assert.deepEqual(retries.map((r) => r.status), [404, 404]);
+  assert.deepEqual(retries.map((r) => r.nextAttempt), [2, 3]);
+});
+
+test('saveApp gives up after its retry budget with a clear error', async () => {
+  const fetchImpl = fakeFetch([fakeResponse(500, 'oops'), fakeResponse(502, ''), fakeResponse(503, '')]);
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  await assert.rejects(
+    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1, 1] }),
+    (err) => err instanceof StepError && /HTTP 503/.test(err.details) && /Retried 2 times/.test(err.details),
+  );
+  assert.equal(fetchImpl.calls.length, 3);
+});
+
+test('saveApp does not retry non-transient errors (401)', async () => {
+  const fetchImpl = fakeFetch([fakeResponse(401, { msg: 'unauthorized' })]);
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  await assert.rejects(
+    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1, 1] }),
+    (err) => err instanceof StepError && /HTTP 401/.test(err.details),
+  );
+  assert.equal(fetchImpl.calls.length, 1, 'auth errors must not be retried');
+});
+
+test('saveApp retries a dropped connection and succeeds', async () => {
+  const fetchImpl = fakeFetch([new Error('socket hang up'), fakeResponse(201, { install_id: 'ABC123' })]);
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  const saved = await saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1] });
+  assert.equal(saved.installId, 'ABC123');
+  assert.equal(fetchImpl.calls.length, 2);
 });
 
 test('saveApp rejects malformed and incomplete responses', async () => {
   const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
   const html = fakeFetch([fakeResponse(404, '<html><body>404 Not Found</body></html>')]);
   await assert.rejects(
-    () => saveApp({ fetchImpl: html, apiBase: API_BASE, signed }),
+    () => saveApp({ fetchImpl: html, apiBase: API_BASE, signed, attempts: 1 }),
     (err) => err instanceof StepError && /could not register/i.test(err.message) && /HTTP 404/.test(err.details),
   );
 
@@ -351,10 +406,11 @@ test('saveApp rejects malformed and incomplete responses', async () => {
 /* uploadToShareIPA — orchestration                                  */
 /* ---------------------------------------------------------------- */
 
-function orchestrationStubs({ uploadResults = [], saveBody, fileType = 'apk' } = {}) {
+function orchestrationStubs({ uploadResults = [], saveBody, saveResponses = null, fileType = 'apk' } = {}) {
   const signed = { ...SIGNED_BODY, fileType };
   const calls = [];
   const uploadCalls = [];
+  const saveQueue = saveResponses ? [...saveResponses] : null;
   const uploadFn = async (filePath, s3Url, opts) => {
     uploadCalls.push({ filePath, s3Url, opts });
     const next = uploadResults.shift() ?? undefined;
@@ -374,6 +430,7 @@ function orchestrationStubs({ uploadResults = [], saveBody, fileType = 'apk' } =
     }
     if (/\/app\/save$/.test(url)) {
       phase++;
+      if (saveQueue && saveQueue.length > 0) return saveQueue.shift();
       return fakeResponse(201, saveBody || { admin_id: 'ADMIN1', install_id: 'abc123' });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -403,6 +460,31 @@ test('uploadToShareIPA runs getSignedUrl -> PUT -> save and returns both links',
   assert.ok(typeof result.timing.serverMs === 'number');
   const saveCall = fetchImpl.calls.find((c) => /\/app\/save$/.test(c.url));
   assert.equal(JSON.parse(saveCall.options.body).appData.changeLog, 'note text');
+});
+
+test('uploadToShareIPA forwards transient save retries without re-uploading', async () => {
+  const { fetchImpl, uploadFn, uploadCalls } = orchestrationStubs({
+    saveResponses: [
+      fakeResponse(404, '<html><body>404 Not Found</body></html>'),
+      fakeResponse(201, { admin_id: 'ADMIN1', install_id: 'abc123' }),
+    ],
+  });
+  const file = tempFile('app-release.apk', Buffer.from('apk-bytes'));
+  const retries = [];
+  const result = await uploadToShareIPA({ root: '/tmp/project' }, file, 'App', 'notes', {
+    fetchImpl,
+    uploadFn,
+    apiBase: API_BASE,
+    saveRetryDelaysMs: [1],
+    onRetry: (info) => retries.push(info),
+  });
+
+  assert.equal(result.url, 'https://install.shareipa.com/abc123');
+  assert.equal(uploadCalls.length, 1, 'the file must not be re-uploaded');
+  assert.equal(retries.length, 1);
+  assert.equal(retries[0].status, 404);
+  assert.equal(fetchImpl.calls.filter((c) => /getSignedUrl/.test(c.url)).length, 1);
+  assert.equal(fetchImpl.calls.filter((c) => /\/app\/save$/.test(c.url)).length, 2);
 });
 
 test('uploadToShareIPA retries a failed PUT with a fresh signed URL (no re-save)', async () => {
