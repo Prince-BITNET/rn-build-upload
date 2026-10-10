@@ -10,7 +10,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
-const { parseArgs, runPlain, PROVIDERS, DEFAULT_PROVIDER, ENVS, StepError } = require('../lib/build-upload');
+const { parseArgs, runPlain, PROVIDERS, DEFAULT_PROVIDER, resolvePlatforms, resolveMode, ENVS, StepError } = require('../lib/build-upload');
 
 /* ---------------------------------------------------------------- */
 /* --provider parsing                                                */
@@ -43,6 +43,48 @@ test('parseArgs rejects unknown and missing provider values as usage errors', ()
       `expected usage error for ${JSON.stringify(argv)}`,
     );
   }
+});
+
+test('parseArgs accepts one or both platforms via --platform (comma-separated)', () => {
+  assert.equal(parseArgs([], { allowPlatform: true }).platforms, null);
+  assert.deepEqual(parseArgs(['--platform', 'android'], { allowPlatform: true }).platforms, ['android']);
+  assert.deepEqual(parseArgs(['--platform', 'ios'], { allowPlatform: true }).platforms, ['ios']);
+  assert.deepEqual(parseArgs(['--platform', 'android,ios'], { allowPlatform: true }).platforms, ['android', 'ios']);
+  assert.deepEqual(parseArgs(['--platform=ios,android'], { allowPlatform: true }).platforms, ['ios', 'android']);
+  assert.deepEqual(parseArgs(['--platform', 'android', '--platform', 'ios'], { allowPlatform: true }).platforms, ['android', 'ios']);
+  assert.deepEqual(parseArgs(['--platform', 'Android , ios '], { allowPlatform: true }).platforms, ['android', 'ios']);
+  assert.deepEqual(parseArgs(['--platform', 'android,android'], { allowPlatform: true }).platforms, ['android']);
+});
+
+test('parseArgs rejects invalid or missing platform values as usage errors', () => {
+  for (const argv of [['--platform', 'web'], ['--platform', 'android,web'], ['--platform'], ['--platform='], ['--platform', ',']]) {
+    assert.throws(
+      () => parseArgs(argv, { allowPlatform: true }),
+      (err) => err instanceof StepError && err.usage === true && /platform/i.test(err.message),
+      `expected usage error for ${JSON.stringify(argv)}`,
+    );
+  }
+});
+
+test('resolvePlatforms passes --platform through and refuses to guess non-interactively', async () => {
+  assert.deepEqual(await resolvePlatforms({}, ['android', 'ios'], true), ['android', 'ios']);
+  assert.deepEqual(await resolvePlatforms({}, ['ios'], true), ['ios']);
+  await assert.rejects(
+    () => resolvePlatforms({ android: {}, ios: {} }, null, true),
+    (err) => err instanceof StepError && err.usage === true && /platform/i.test(err.message),
+  );
+  /* tests run without a TTY — that counts as non-interactive too */
+  await assert.rejects(
+    () => resolvePlatforms({ android: {}, ios: {} }, null, false),
+    (err) => err instanceof StepError && err.usage === true,
+  );
+});
+
+test('resolveMode defaults to sequential for one platform and for --ci', async () => {
+  assert.equal(await resolveMode([{ label: 'Android' }], false), 'sequential');
+  assert.equal(await resolveMode([{ label: 'Android' }, { label: 'iOS' }], true), 'sequential');
+  /* two platforms + no TTY (tests) also resolves without asking */
+  assert.equal(await resolveMode([{ label: 'Android' }, { label: 'iOS' }], false), 'sequential');
 });
 
 /* ---------------------------------------------------------------- */
@@ -216,5 +258,90 @@ test('runPlain --ci --provider betadrop uses BetaDrop and keeps the line-oriente
     assert.equal(calls[0].opts.ci, true);
   } finally {
     PROVIDERS.betadrop.upload = original;
+  }
+});
+
+/* ---------------------------------------------------------------- */
+/* Both platforms in one run (--ci, sequential)                      */
+/* ---------------------------------------------------------------- */
+
+function makePlainAdapter(key, label, artifactWord, fileName) {
+  return {
+    key,
+    label,
+    appName: 'DemoApp',
+    shareName: 'Demo-App',
+    artifactWord,
+    expectedName: fileName,
+    entry: { command: `ship --platform ${key}`, label, appName: 'DemoApp', shareName: 'Demo-App', allowPlatform: false, verboseHint: 'verbose' },
+    profile: { root: '/tmp/demo-project' },
+    built: 0,
+    async build() {
+      this.built++;
+    },
+    async produceArtifact() {
+      return {
+        file: { name: fileName, fullPath: `/tmp/demo-project/${fileName}`, size: 1024 },
+        fallback: false,
+      };
+    },
+  };
+}
+
+test('runPlain builds both platforms sequentially and copies both links (--ci)', async () => {
+  const calls = [];
+  const original = PROVIDERS.shareipa.upload;
+  let n = 0;
+  PROVIDERS.shareipa.upload = async (profile, filePath, name, notes, opts) => {
+    calls.push({ name, notes, opts });
+    n++;
+    return { url: `https://install.shareipa.com/LINK${n}`, timing: { transferMs: 1, serverMs: 1 } };
+  };
+
+  const android = makePlainAdapter('android', 'Android', 'APK', 'app-release.apk');
+  const ios = makePlainAdapter('ios', 'iOS', 'IPA', 'app.ipa');
+  let restores = 0;
+
+  try {
+    const { stdout, stderr } = await captureConsole(() =>
+      runPlain([android, ios], {
+        env: ENVS['--uat'],
+        verbose: false,
+        versions: [
+          { versionName: '8.7', versionCode: '196' },
+          { versionName: '8.2', versionCode: '3' },
+        ],
+        backend: { restore() {} },
+        finishRestore() {
+          restores++;
+        },
+        startedAt: Date.now(),
+        provider: 'shareipa',
+      }),
+    );
+
+    const out = stdout.join('\n');
+    assert.ok(out.includes('DemoApp Android Staging build (v8.7, build 196)'));
+    assert.ok(out.includes('DemoApp iOS Staging build (v8.2, build 3)'));
+    assert.equal((out.match(/Uploading to ShareIPA\.\.\./g) || []).length, 2, 'both platforms upload');
+
+    const first = out.indexOf('Demo-App (STAG): [Android Build Link](https://install.shareipa.com/LINK1)');
+    const second = out.indexOf('Demo-App (STAG): [iOS Build Link](https://install.shareipa.com/LINK2)');
+    assert.ok(first !== -1 && second !== -1 && first < second, `both links missing or out of order:\n${out}`);
+
+    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
+    assert.equal(stderr.join(''), '');
+
+    assert.equal(android.built, 1);
+    assert.equal(ios.built, 1);
+    assert.equal(calls.length, 2);
+    assert.equal(restores, 1, 'APPConfig restored once, after the last build');
+    assert.ok(calls[0].notes.includes('Android Staging'), calls[0].notes);
+    assert.ok(calls[1].notes.includes('iOS Staging'), calls[1].notes);
+    assert.equal(calls[0].opts.ci, true);
+    assert.equal(calls[1].opts.ci, true);
+  } finally {
+    PROVIDERS.shareipa.upload = original;
   }
 });
