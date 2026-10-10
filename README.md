@@ -7,19 +7,24 @@ share message to the clipboard.
 
 Installs the short `ship` command (`rn-build-upload` stays available as an alias).
 
-One command, asks for the platform first — Android or iOS — then the environment —
-Staging or Production.
+One command, asks which platform(s) — check Android, iOS, or both — then the
+environment — Staging or Production.
 
 ```text
-◆  Select build platform
-│  ● Android
-│  ○ iOS
+◆  Select build platform(s)
+│  ◻ Android   Gradle release APK
+│  ◻ iOS       Xcode release IPA
+└  ↑/↓ move · space to check · enter to confirm
+│
+◆  Build Android + iOS how?          (asked only when both are checked)
+│  ● Sequential   build + upload one, then the other
+│  ○ Parallel     build + upload both at the same time
 │
 ◆  Select build environment
 │  ● Staging
 │  ○ Production
 │
-◇  Android build ready — paste it anywhere with ⌘V
+◇  Android + iOS builds ready — paste them anywhere with ⌘V
 ```
 
 ## Requirements
@@ -50,21 +55,44 @@ export BETADROP_TOKEN=bd_live_xxxx      # or a token from betadrop.app -> Settin
 Run it from anywhere inside a project:
 
 ```bash
-ship                                  # ask platform, then environment (ShareIPA by default)
+ship                                  # pick platform(s), then environment (ShareIPA by default)
 ship --platform ios                   # skip the platform question
 ship --platform android --uat --ci    # non-interactive (CI)
+ship --platform android,ios --uat     # both platforms in one run (asks Sequential/Parallel)
 ship --platform android --uat --provider betadrop   # upload to BetaDrop instead
 ship --check                          # show what the tool detects, build nothing
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| `--platform android\|ios` | Skip the platform prompt (required with `--ci`) |
+| `--platform android\|ios\|android,ios` | Pick one or both platforms (required with `--ci`; CI runs both sequentially) |
 | `--uat` / `--prod` | Staging (`isUAT=true`) / Production (`isUAT=false`) backend |
 | `--provider shareipa\|betadrop` | Upload provider — `shareipa` (default) or `betadrop` |
-| `--verbose` | Stream the full Gradle / xcodebuild output |
+| `--verbose` | Stream the full Gradle / xcodebuild output (sequential/single; parallel uses the compact view) |
 | `--ci` | Plain, line-oriented output for scripts and CI |
 | `--check` | Print the detected project profile and exit |
+
+### Building both platforms in one run
+
+Check both boxes (or pass `--platform android,ios`) and pick how they run —
+that question appears **only** when both are selected:
+
+- **Sequential** (default) — Android builds and uploads, then iOS. One adapter
+  at a time, full live progress for each; both links land at the end.
+- **Parallel** — Gradle and Xcode run side by side, each upload starts as soon
+  as its build finishes, and the view shows both streams prefixed
+  (`[Android] …` / `[iOS] …`). Faster, but heavy — two toolchains at once need
+  a lot of CPU/RAM.
+
+Either way the clipboard gets **both** lines:
+
+```text
+Alfa-PTE (PROD): [Android Build Link](https://install.shareipa.com/xxxxxx)
+Alfa-PTE (PROD): [iOS Build Link](https://install.shareipa.com/yyyyyy)
+```
+
+If only one checkbox is selected, `ship` behaves exactly like before — no
+Sequential/Parallel question.
 
 Per-project convenience scripts (optional):
 
@@ -152,13 +180,14 @@ first run in a project.
   (percentage, MB sent, speed) and switching to "Processing on BetaDrop…"
   while the server finalizes the build; the **link expires after 7 days**.
 - `--ci` keeps the machine contract instead: no spinners, install link as the
-  last stdout line.
+  last stdout line (with both platforms, both links are printed, one per line).
 - The build label/notes come from the detected app label, e.g.
   `AlfaPTE Android Staging Build — v8.5 (build 193)`.
 - The share message copied to the clipboard is
   `Alfa-PTE (STAG): [Android Build Link](LINK)` — the app name is hyphenated
   (`AlfaPTE` → `Alfa-PTE`, `PTENow` → `PTE-Now`), the environment is `STAG`
-  or `PROD`, and the link text is `Android`/`iOS Build Link`.
+  or `PROD`, and the link text is `Android`/`iOS Build Link`. A two-platform
+  run copies both lines together.
 - iOS builds reuse Xcode's own DerivedData, so caches are shared with manual
   Xcode builds. The generated `.ipa` lives in a temp staging folder that is
   removed again only after a successful upload.

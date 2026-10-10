@@ -4,10 +4,11 @@
  * (Installed as `ship`, with `rn-build-upload` as an alias.)
  *
  * Usage:
- *   ship [--platform android|ios] [--uat | --prod] [--provider betadrop|shareipa] [--verbose] [--ci] [--check]
+ *   ship [--platform android|ios|android,ios] [--uat | --prod] [--provider betadrop|shareipa] [--verbose] [--ci] [--check]
  *
- *     no flags   Ask which platform (Android / iOS) first, then which environment
+ *     no flags   Ask which platform(s) first, then which environment
  *     --platform android|ios  Skip the platform prompt
+ *     --platform android,ios  Both platforms in one run (Sequential or Parallel)
  *     --uat      Stag backend (isUAT=true)
  *     --prod     Prod backend (isUAT=false)
  *     --provider shareipa|betadrop  Upload provider (default: shareipa)
@@ -43,7 +44,7 @@ const {
   plain,
   renderStepError,
   renderUsageError,
-  resolvePlatform,
+  resolvePlatforms,
   run,
   usageText,
 } = require('../lib/build-upload');
@@ -75,11 +76,12 @@ function failPlain(err) {
 }
 
 /** Print the detected profile (and version, when readable) — no side effects. */
-async function check(profile, requestedPlatform) {
+async function check(profile, requestedPlatforms) {
   console.log(`Project : ${profile.root}`);
   console.log(`App     : ${profile.appName}`);
+  console.log(`Link    : ${profile.shareName}`);
   console.log(`Env     : ${profile.envFile}`);
-  const platforms = requestedPlatform ? [requestedPlatform] : ['android', 'ios'];
+  const platforms = requestedPlatforms && requestedPlatforms.length > 0 ? requestedPlatforms : ['android', 'ios'];
   for (const key of platforms) {
     console.log('');
     console.log(`[${key}]`);
@@ -139,32 +141,37 @@ async function main() {
   }
 
   if (parsed.check) {
-    await check(profile, parsed.platform);
+    await check(profile, parsed.platforms);
     return;
   }
 
   /* Platform question comes first; the environment question follows inside
    * run() (or comes from --uat/--prod). */
-  let platform;
+  let platforms;
   try {
     if (!parsed.ci) p.intro(`${profile.appName}  ·  Build & Distribution`);
-    platform = await resolvePlatform(parsed.platform, parsed.ci);
+    platforms = await resolvePlatforms(profile, parsed.platforms, parsed.ci);
   } catch (err) {
     if (parsed.ci) failPlain(err);
     renderUsageError(err, ENTRY);
     return;
   }
 
-  let adapter;
+  /* One adapter per selected platform (creation validates availability). */
+  const adapters = [];
+  let creating = null;
   try {
-    adapter = PLATFORMS[platform].create(profile);
+    for (const key of platforms) {
+      creating = key;
+      adapters.push(PLATFORMS[key].create(profile));
+    }
   } catch (err) {
     if (parsed.ci) failPlain(err);
-    renderStepError(err, {}, PLATFORMS[platform]);
+    renderStepError(err, {}, PLATFORMS[creating]);
     return;
   }
 
-  await run(adapter, {
+  await run(adapters, {
     envName: parsed.envName,
     verbose: parsed.verbose,
     ci: parsed.ci,
