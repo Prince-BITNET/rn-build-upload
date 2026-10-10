@@ -119,7 +119,7 @@ test('runPlain --ci keeps line-oriented output and routes through the selected p
     assert.match(out, /Uploading to ShareIPA\.\.\./);
     assert.match(out, /Processing on ShareIPA\.\.\./);
     assert.ok(
-      out.includes('DemoApp: [Android Stag Build](https://install.shareipa.com/TESTID)'),
+      out.includes('DemoApp (STAG): [Android Build Link](https://install.shareipa.com/TESTID)'),
       `share message missing from CI output:\n${out}`,
     );
     assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
@@ -139,6 +139,7 @@ test('runPlain --ci keeps line-oriented output and routes through the selected p
 function iosAdapter() {
   return {
     appName: 'DemoApp',
+    shareName: 'Demo-App',
     label: 'iOS',
     artifactWord: 'IPA',
     expectedName: 'app.ipa',
@@ -173,7 +174,7 @@ test('runPlain uses ShareIPA (the default) when no provider is given', async () 
     );
     const out = stdout.join('\n');
     assert.match(out, /Uploading to ShareIPA\.\.\./);
-    assert.ok(out.includes('DemoApp: [iOS Prod Build](https://install.shareipa.com/TESTID)'));
+    assert.ok(out.includes('Demo-App (PROD): [iOS Build Link](https://install.shareipa.com/TESTID)'));
     assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
     assert.equal(stderr.join(''), '');
@@ -207,7 +208,7 @@ test('runPlain --ci --provider betadrop uses BetaDrop and keeps the line-oriente
     );
     const out = stdout.join('\n');
     assert.match(out, /Uploading to BetaDrop\.\.\./);
-    assert.ok(out.includes('DemoApp: [iOS Prod Build](https://betadrop.app/i/TESTID)'));
+    assert.ok(out.includes('Demo-App (PROD): [iOS Build Link](https://betadrop.app/i/TESTID)'));
     assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
     assert.equal(stderr.join(''), '');

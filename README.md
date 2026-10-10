@@ -156,7 +156,9 @@ first run in a project.
 - The build label/notes come from the detected app label, e.g.
   `AlfaPTE Android Staging Build — v8.5 (build 193)`.
 - The share message copied to the clipboard is
-  `AlfaPTE: [Android Stag Build](LINK)` (or `iOS`).
+  `Alfa-PTE (STAG): [Android Build Link](LINK)` — the app name is hyphenated
+  (`AlfaPTE` → `Alfa-PTE`, `PTENow` → `PTE-Now`), the environment is `STAG`
+  or `PROD`, and the link text is `Android`/`iOS Build Link`.
 - iOS builds reuse Xcode's own DerivedData, so caches are shared with manual
   Xcode builds. The generated `.ipa` lives in a temp staging folder that is
   removed again only after a successful upload.
