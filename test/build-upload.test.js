@@ -10,7 +10,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
-const { parseArgs, runPlain, PROVIDERS, DEFAULT_PROVIDER, resolvePlatforms, resolveMode, ENVS, StepError } = require('../lib/build-upload');
+const { parseArgs, runPlain, PROVIDERS, DEFAULT_PROVIDER, resolvePlatforms, resolveMode, retrySuffix, ENVS, StepError } = require('../lib/build-upload');
 
 /* ---------------------------------------------------------------- */
 /* --provider parsing                                                */
@@ -85,6 +85,14 @@ test('resolveMode defaults to sequential for one platform and for --ci', async (
   assert.equal(await resolveMode([{ label: 'Android' }, { label: 'iOS' }], true), 'sequential');
   /* two platforms + no TTY (tests) also resolves without asking */
   assert.equal(await resolveMode([{ label: 'Android' }, { label: 'iOS' }], false), 'sequential');
+});
+
+test('retrySuffix renders the retry counter for provider notices', () => {
+  assert.equal(retrySuffix({ attempt: 1, nextAttempt: 2, attempts: 5, delayMs: 15000 }), ' (retry 2/5 in 15s)');
+  assert.equal(retrySuffix({ attempt: 4, nextAttempt: 5, attempts: 5, delayMs: 60000 }), ' (retry 5/5 in 60s)');
+  assert.equal(retrySuffix({ nextAttempt: 2, delayMs: 0 }), ' (retry 2)');
+  assert.equal(retrySuffix(null), ' (retrying)');
+  assert.equal(retrySuffix({}), ' (retrying)');
 });
 
 /* ---------------------------------------------------------------- */
