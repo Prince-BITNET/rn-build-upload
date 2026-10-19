@@ -19,6 +19,8 @@ const {
   installUrlFor,
   adminUrlFor,
   sanitize,
+  isRetryableSaveFailure,
+  isSaveRetryCapExceeded,
   getSignedUrl,
   uploadFileToPresignedUrl,
   buildSavePayload,
@@ -53,6 +55,23 @@ const SIGNED_BODY = {
   },
   deviceInfo: { device: '', deviceType: '', os: '', ipAddr: '' },
 };
+
+/**
+ * The exact HTTP 400 body ShareIPA's backend returns when it cannot reach its
+ * own extract worker (observed live 2026-10-19; a serialized Go net.OpError).
+ * "connection refused" here is on *their* side, not the client's.
+ */
+const WORKER_DOWN_BODY = JSON.stringify({
+  Op: 'Post',
+  URL: 'http://10.0.0.8:4000/api/v1/ex/extract',
+  Err: {
+    Op: 'dial',
+    Net: 'tcp',
+    Source: null,
+    Addr: { IP: '10.0.0.8', Port: 4000, Zone: '' },
+    Err: { Syscall: 'connect', Err: 111 },
+  },
+});
 
 function fakeResponse(status, body, headers = {}) {
   const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
@@ -324,7 +343,7 @@ test('saveApp never leaks the token or presigned URL in errors', async () => {
   ]);
   const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
   await assert.rejects(
-    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1, 1] }),
+    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, attempts: 3, retryDelaysMs: [1, 1] }),
     (err) => {
       const dump = `${err.message}\n${err.details}\n${err.hint}`;
       assert.ok(err instanceof StepError);
@@ -363,7 +382,7 @@ test('saveApp gives up after its retry budget with a clear error', async () => {
   const fetchImpl = fakeFetch([fakeResponse(500, 'oops'), fakeResponse(502, ''), fakeResponse(503, '')]);
   const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
   await assert.rejects(
-    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1, 1] }),
+    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, attempts: 3, retryDelaysMs: [1, 1] }),
     (err) => err instanceof StepError && /HTTP 503/.test(err.details) && /Retried 2 times/.test(err.details),
   );
   assert.equal(fetchImpl.calls.length, 3);
@@ -377,6 +396,116 @@ test('saveApp does not retry non-transient errors (401)', async () => {
     (err) => err instanceof StepError && /HTTP 401/.test(err.details),
   );
   assert.equal(fetchImpl.calls.length, 1, 'auth errors must not be retried');
+});
+
+test('isRetryableSaveFailure classifies statuses and wrapped internal outages', () => {
+  for (const status of [404, 408, 425, 429, 500, 502, 503]) {
+    assert.equal(isRetryableSaveFailure(status, ''), true, `status ${status} should retry`);
+  }
+  assert.equal(isRetryableSaveFailure(400, WORKER_DOWN_BODY), true, 'a 400 wrapping a ShareIPA-internal connection failure is transient');
+  assert.equal(isRetryableSaveFailure(400, ''), false);
+  assert.equal(isRetryableSaveFailure(400, JSON.stringify({ msg: 'invalid apk' })), false);
+  assert.equal(
+    isRetryableSaveFailure(400, JSON.stringify({ code: 75, msg: 'error exceeded limit' })),
+    true,
+    'the code-75 throttle clears after ~a minute, so it is retried too',
+  );
+  assert.equal(isRetryableSaveFailure(401, WORKER_DOWN_BODY), false);
+  assert.equal(isRetryableSaveFailure(403, WORKER_DOWN_BODY), false);
+});
+
+test('isSaveRetryCapExceeded matches only the code-75 / limit bodies', () => {
+  assert.equal(isSaveRetryCapExceeded('{"code":75,"msg":"error exceeded limit"}'), true);
+  assert.equal(isSaveRetryCapExceeded('error exceeded limit'), true);
+  assert.equal(isSaveRetryCapExceeded(WORKER_DOWN_BODY), false);
+  assert.equal(isSaveRetryCapExceeded('{"code":7,"msg":"nope"}'), false);
+  assert.equal(isSaveRetryCapExceeded(''), false);
+});
+
+test("saveApp retries a 400 that wraps ShareIPA's own connection failure", async () => {
+  const fetchImpl = fakeFetch([
+    fakeResponse(400, WORKER_DOWN_BODY),
+    fakeResponse(400, WORKER_DOWN_BODY),
+    fakeResponse(201, { admin_id: 'ADMIN1', install_id: 'abc123' }),
+  ]);
+  const retries = [];
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  const saved = await saveApp({
+    fetchImpl,
+    apiBase: API_BASE,
+    signed,
+    retryDelaysMs: [1, 1],
+    onRetry: (info) => retries.push(info),
+  });
+
+  assert.equal(saved.installId, 'abc123');
+  assert.equal(fetchImpl.calls.length, 3);
+  assert.deepEqual(retries.map((r) => r.status), [400, 400]);
+  assert.deepEqual(retries.map((r) => r.nextAttempt), [2, 3]);
+  assert.ok(retries.every((r) => r.attempts === 5), 'retry notices carry the budget for the UI');
+});
+
+test('saveApp still refuses to retry a genuine 400 (bad request)', async () => {
+  const fetchImpl = fakeFetch([fakeResponse(400, { msg: 'invalid apk' })]);
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  await assert.rejects(
+    () => saveApp({ fetchImpl, apiBase: API_BASE, signed, retryDelaysMs: [1, 1] }),
+    (err) => err instanceof StepError && /could not register/i.test(err.message) && /HTTP 400/.test(err.details) && /invalid apk/.test(err.details),
+  );
+  assert.equal(fetchImpl.calls.length, 1, 'validation errors must not be retried');
+});
+
+test('saveApp names the ShareIPA outage when processing never recovers', async () => {
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  const capBody = JSON.stringify({ code: 75, msg: 'error exceeded limit' });
+
+  const dialLast = fakeFetch([fakeResponse(400, WORKER_DOWN_BODY), fakeResponse(400, WORKER_DOWN_BODY), fakeResponse(400, WORKER_DOWN_BODY)]);
+  await assert.rejects(
+    () => saveApp({ fetchImpl: dialLast, apiBase: API_BASE, signed, attempts: 3, retryDelaysMs: [1, 1] }),
+    (err) =>
+      err instanceof StepError &&
+      /processing service is down/i.test(err.message) &&
+      /connection refused on ShareIPA's side/.test(err.details) &&
+      /Retried 2 times/.test(err.details) &&
+      /betadrop/.test(err.hint),
+  );
+  assert.equal(dialLast.calls.length, 3);
+
+  const capLast = fakeFetch([fakeResponse(400, WORKER_DOWN_BODY), fakeResponse(400, WORKER_DOWN_BODY), fakeResponse(400, capBody)]);
+  await assert.rejects(
+    () => saveApp({ fetchImpl: capLast, apiBase: API_BASE, signed, attempts: 3, retryDelaysMs: [1, 1] }),
+    (err) =>
+      err instanceof StepError &&
+      /processing service is down/i.test(err.message) &&
+      /error exceeded limit/.test(err.details) &&
+      /capped/.test(err.details) &&
+      /ShareIPA outage/i.test(err.details),
+  );
+  assert.equal(capLast.calls.length, 3);
+});
+
+test("saveApp retries through ShareIPA's per-upload throttle (code 75)", async () => {
+  const retryCapBody = JSON.stringify({ code: 75, msg: 'error exceeded limit' });
+  const fetchImpl = fakeFetch([
+    fakeResponse(400, WORKER_DOWN_BODY),
+    fakeResponse(400, WORKER_DOWN_BODY),
+    fakeResponse(400, retryCapBody),
+    fakeResponse(400, WORKER_DOWN_BODY),
+    fakeResponse(201, { admin_id: 'ADMIN1', install_id: 'abc123' }),
+  ]);
+  const retries = [];
+  const signed = { ...SIGNED_BODY, token: TOKEN, browserId: BROWSER_ID };
+  const saved = await saveApp({
+    fetchImpl,
+    apiBase: API_BASE,
+    signed,
+    retryDelaysMs: [1, 1, 1, 1],
+    onRetry: (info) => retries.push(info),
+  });
+
+  assert.equal(saved.installId, 'abc123');
+  assert.equal(fetchImpl.calls.length, 5, 'the throttle body does not stop the loop');
+  assert.deepEqual(retries.map((r) => r.status), [400, 400, 400, 400]);
 });
 
 test('saveApp retries a dropped connection and succeeds', async () => {
