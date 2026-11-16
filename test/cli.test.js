@@ -285,6 +285,8 @@ test('iOS success removes the staged IPA too; both platforms report their own re
     assert.equal(doc.outcome, 'success');
     assert.deepEqual(doc.platforms.map((p) => [p.platform, p.status]), [['android', 'success'], ['ios', 'success']]);
     assert.equal(doc.platforms[1].artifact.signature, null, 'IPA signatures are not checked by ship');
+    const iosCall = sb.uploadCalls().find((c) => c.file === 'Demo.ipa');
+    assert.match(iosCall.meta.iconPath, /ios\/Demo\/Images\.xcassets\/AppIcon\.appiconset\/1024\.png$/, 'largest AppIcon image');
     const lines = r.stdout.trim().split('\n');
     assert.deepEqual(lines.slice(-2), [
       'Demo-App (STAG): [Android Build Link](https://install.example.test/appshare/app-release.apk)',
@@ -458,7 +460,8 @@ test('AppShare: default 90 days, build metadata passed, --expires-in-days overri
     const [first] = sb.uploadCalls();
     assert.equal(first.provider, 'appshare');
     assert.equal(first.expiresInDays, 90);
-    assert.deepEqual(first.meta, { version: '1.2.3', buildNumber: '7', bundleId: 'com.example.demo' });
+    assert.deepEqual({ ...first.meta, iconPath: undefined }, { version: '1.2.3', buildNumber: '7', bundleId: 'com.example.demo', iconPath: undefined });
+    assert.match(first.meta.iconPath, /android\/app\/src\/main\/res\/mipmap-xxhdpi\/ic_launcher\.png$/, 'densest launcher icon');
     assert.equal(first.name, 'DemoApp Android Staging');
 
     r = await spawnShip(sb, [...ANDROID_CI, '--uat', '--expires-in-days', 'never', '--output-json', sb.resultPath]).done;

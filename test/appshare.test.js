@@ -15,7 +15,8 @@ const path = require('node:path');
 const { test } = require('node:test');
 
 const { StepError } = require('../lib/errors');
-const { parseExpiry, login, uploadToAppShare, resetSessionForTests, DEFAULT_EXPIRY_DAYS, EXPIRY_CHOICES } = require('../lib/providers/appshare');
+const { spawnSync } = require('node:child_process');
+const { parseExpiry, iconDataUrl, login, uploadToAppShare, resetSessionForTests, DEFAULT_EXPIRY_DAYS, EXPIRY_CHOICES } = require('../lib/providers/appshare');
 
 const BASE = 'https://appshare.example.test';
 const ENV = { APPSHARE_EMAIL: 'dev@example.test', APPSHARE_PASSWORD: 's3cret-pass' };
@@ -181,6 +182,7 @@ test('upload: multipart PUTs, complete, publish with metadata and the default 90
       notes: 'notes here',
       password: '',
       expiresIn: '90',
+      icon: '',
     });
     assert.equal(progress[progress.length - 1], 100);
     assert.equal(processing, 1);
@@ -286,4 +288,71 @@ test('cancelling during the part upload stops it and deletes the upload', async 
 
 test('only .apk and .ipa files are accepted', async () => {
   await assert.rejects(uploadToAppShare({}, '/tmp/x.zip', 'n', '', { env: ENV, fetchImpl: async () => assert.fail('no request') }), (err) => /cannot upload this file type/.test(err.message));
+});
+
+test('the project icon is sent as a PNG data URL with the build', async () => {
+  resetSessionForTests();
+  const apk = tmpApk(100);
+  const storage = await startStorage();
+  const api = fakeApi(storage, { partSize: 1024, fileSize: 100 });
+  const seen = [];
+  try {
+    await uploadToAppShare({}, apk.file, 'n', '', {
+      fetchImpl: api.fetchImpl,
+      base: BASE,
+      env: ENV,
+      meta: { version: '1', iconPath: '/project/res/mipmap-xxxhdpi/ic_launcher.webp' },
+      toIcon: (p) => {
+        seen.push(p);
+        return 'data:image/png;base64,AAAA';
+      },
+    });
+    assert.deepEqual(seen, ['/project/res/mipmap-xxxhdpi/ic_launcher.webp']);
+    assert.equal(api.calls.find((c) => c.route === '/api/builds').body.icon, 'data:image/png;base64,AAAA');
+  } finally {
+    await storage.close();
+    apk.cleanup();
+  }
+});
+
+test('iconDataUrl only shrinks (max 256 px) and never fails the upload', () => {
+  const calls = [];
+  const fakeRun = (width, status = 0) => (cmd, args) => {
+    calls.push(args);
+    if (args[0] === '-g') return { status: 0, stdout: `x\n  pixelWidth: ${width}\n` };
+    fs.writeFileSync(args[args.length - 1], Buffer.from('PNGDATA'));
+    return { status };
+  };
+  assert.equal(iconDataUrl('/i/1024.png', { run: fakeRun(1024) }), `data:image/png;base64,${Buffer.from('PNGDATA').toString('base64')}`);
+  assert.deepEqual(calls[1].slice(0, 5), ['-s', 'format', 'png', '-Z', '256'], 'large icons are shrunk to 256');
+  calls.length = 0;
+  iconDataUrl('/i/192.webp', { run: fakeRun(192) });
+  assert.ok(!calls[1].includes('-Z'), 'small icons are not upscaled');
+
+  assert.equal(iconDataUrl(null), '');
+  assert.equal(iconDataUrl('/i/x.png', { run: fakeRun(512, 1) }), '', 'sips failure -> no icon');
+  assert.equal(iconDataUrl('/i/x.png', { run: () => { throw new Error('boom'); } }), '');
+  assert.ok(!fs.readdirSync(os.tmpdir()).some((n) => n.startsWith('rn-build-upload-icon-')), 'temp files removed');
+});
+
+test('integration: real sips converts a PNG to a 256 px data URL', (t) => {
+  if (spawnSync('sips', ['--help']).error) {
+    t.skip('sips not available (macOS only)');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-icon-it-'));
+  try {
+    /* 1x1 PNG, upscaled by sips to 300x300, then shrunk by iconDataUrl */
+    const onePx = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+    const src = path.join(dir, 'src.png');
+    fs.writeFileSync(src, onePx);
+    spawnSync('sips', ['-z', '300', '300', src]);
+    const url = iconDataUrl(src);
+    assert.match(url, /^data:image\/png;base64,/);
+    const png = Buffer.from(url.split(',')[1], 'base64');
+    assert.equal(png.readUInt32BE(16), 256);
+    assert.equal(png.readUInt32BE(20), 256);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
