@@ -292,7 +292,7 @@ exit path, including failures and cancellation.
 ```json
 {
   "schemaVersion": 1,
-  "tool": { "name": "rn-build-upload", "version": "2.0.0" },
+  "tool": { "name": "rn-build-upload", "version": "2.1.0" },
   "outcome": "success",
   "exitCode": 0,
   "error": null,
@@ -449,15 +449,18 @@ resolves; the created link simply expires after 7 days.
 
 ## Releases
 
-Pin `ship` in CI by tag, not by branch. This version is **2.0.0** (breaking
-for automation: unsigned APKs are rejected, `--ci` requires an environment
-flag and no longer copies to the clipboard, the iOS staging IPA is removed
-after a failed upload). After review and merge, it is intended to be tagged
-`v2.0.0` and installed with:
+Pin `ship` in CI by tag, not by branch. Install the current release with:
 
 ```bash
-npm i -g github:Prince-BITNET/rn-build-upload#v2.0.0
+npm i -g github:Prince-BITNET/rn-build-upload#v2.1.0
 ```
+
+- **2.1.0** — AppShare uploads include the app icon (from the project's
+  launcher icon / AppIcon set).
+- **2.0.0** — AppShare is the default provider (`--expires-in-days`, default
+  90). Breaking for automation: unsigned APKs are rejected, `--ci` requires an
+  environment flag and no longer copies to the clipboard, the iOS staging IPA
+  is removed after a failed upload.
 
 BetaDrop pin scope: `npx -y @betadrop/cli@0.4.0` always runs exactly 0.4.0
 (verified: a different locally installed version is ignored, and an
