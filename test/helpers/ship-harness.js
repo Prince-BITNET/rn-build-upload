@@ -7,6 +7,7 @@
  *   SHIP_TEST_UPLOAD        success (default) | fail | hang (until cancelled)
  *   SHIP_TEST_UPLOAD_CALLS  append one JSON line per upload call to this file
  *   SHIP_TEST_SLOW_HASH     see below
+ *   SHIP_TEST_PREFLIGHT     fail = the provider sign-in check rejects
  */
 
 const fs = require('node:fs');
@@ -32,9 +33,17 @@ const mode = process.env.SHIP_TEST_UPLOAD || 'success';
 const callsFile = process.env.SHIP_TEST_UPLOAD_CALLS;
 
 for (const [key, provider] of Object.entries(core.PROVIDERS)) {
+  /* SHIP_TEST_PREFLIGHT=fail: the provider sign-in check rejects. */
+  if (provider.preflight) {
+    provider.preflight = async () => {
+      if (process.env.SHIP_TEST_PREFLIGHT === 'fail') {
+        throw new StepError('AppShare sign-in failed.', { code: 'UPLOAD_AUTH_FAILED', details: 'mocked bad credentials' });
+      }
+    };
+  }
   provider.upload = async (profile, filePath, name, notes, opts = {}) => {
     if (callsFile) {
-      fs.appendFileSync(callsFile, `${JSON.stringify({ provider: key, file: path.basename(filePath), existed: fs.existsSync(filePath), ci: Boolean(opts.ci) })}\n`);
+      fs.appendFileSync(callsFile, `${JSON.stringify({ provider: key, file: path.basename(filePath), existed: fs.existsSync(filePath), ci: Boolean(opts.ci), name, meta: opts.meta, expiresInDays: opts.expiresInDays })}\n`);
     }
     if (mode === 'fail') {
       throw new StepError('Upload failed.', { code: 'UPLOAD_FAILED', details: 'mocked provider failure' });

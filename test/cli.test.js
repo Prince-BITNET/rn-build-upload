@@ -31,7 +31,7 @@ test('CI success: exit 0, JSON success with URL + sha256, share message last, no
     const r = await done;
     assert.equal(r.code, 0, r.stderr);
     const lines = r.stdout.trim().split('\n');
-    assert.equal(lines[lines.length - 1], 'Demo-App (PROD): [Android Build Link](https://install.example.test/shareipa/app-release.apk)');
+    assert.equal(lines[lines.length - 1], 'Demo-App (PROD): [Android Build Link](https://install.example.test/appshare/app-release.apk)');
     assert.doesNotMatch(r.stdout, /clipboard/i);
     assert.equal(r.stderr, '');
 
@@ -39,11 +39,12 @@ test('CI success: exit 0, JSON success with URL + sha256, share message last, no
     assert.equal(doc.outcome, 'success');
     assert.equal(doc.exitCode, 0);
     assert.equal(doc.request.environment, 'prod');
-    assert.equal(doc.request.provider, 'shareipa');
+    assert.equal(doc.request.provider, 'appshare');
+    assert.equal(doc.request.expiresInDays, 90, 'AppShare links default to 90 days');
     assert.match(doc.project.commitSha, /^[0-9a-f]{40}$/);
     assert.equal(doc.project.workingTreeDirty, false, 'git state is read before APPConfig.js is patched');
     const [android] = doc.platforms;
-    assert.equal(android.artifactUrl, 'https://install.example.test/shareipa/app-release.apk');
+    assert.equal(android.artifactUrl, 'https://install.example.test/appshare/app-release.apk');
     assert.match(android.artifact.sha256, /^[0-9a-f]{64}$/);
     assert.deepEqual(android.artifact.signature.schemes, ['v2']);
     assert.deepEqual(android.version, { name: '1.2.3', code: '7' });
@@ -263,7 +264,7 @@ test('iOS: SIGTERM during the upload removes the staged IPA and exits 130', asyn
   const sb = makeSandbox({ android: false, ios: true });
   try {
     const run = spawnShip(sb, ['--platform', 'ios', '--ci', '--prod', '--output-json', sb.resultPath], { upload: 'hang' });
-    await run.waitFor(/Uploading to ShareIPA/);
+    await run.waitFor(/Uploading to AppShare/);
     assert.equal(sb.leftoverTemp().length, 1, 'the staged IPA dir exists during the upload');
     run.child.kill('SIGTERM');
     const r = await run.done;
@@ -286,8 +287,8 @@ test('iOS success removes the staged IPA too; both platforms report their own re
     assert.equal(doc.platforms[1].artifact.signature, null, 'IPA signatures are not checked by ship');
     const lines = r.stdout.trim().split('\n');
     assert.deepEqual(lines.slice(-2), [
-      'Demo-App (STAG): [Android Build Link](https://install.example.test/shareipa/app-release.apk)',
-      'Demo-App (STAG): [iOS Build Link](https://install.example.test/shareipa/Demo.ipa)',
+      'Demo-App (STAG): [Android Build Link](https://install.example.test/appshare/app-release.apk)',
+      'Demo-App (STAG): [iOS Build Link](https://install.example.test/appshare/Demo.ipa)',
     ]);
     assertClean(sb);
   } finally {
@@ -437,6 +438,71 @@ test('review #6: the uploaded APK is a private snapshot; the build output stays 
     assert.equal(call.existed, true);
     assert.match(r.stdout, /APK: android\/app\/build\/outputs\/apk\/release\/app-release\.apk \(/, 'CI output names the build output, not the temp copy');
     assert.ok(fs.existsSync(path.join(sb.project, 'android/app/build/outputs/apk/release/app-release.apk')));
+    assertClean(sb);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+/* ---------------------------------------------------------------- */
+/* AppShare (default provider)                                       */
+/* ---------------------------------------------------------------- */
+
+test('AppShare: default 90 days, build metadata passed, --expires-in-days overrides', async () => {
+  const sb = makeSandbox();
+  try {
+    let r = await spawnShip(sb, [...ANDROID_CI, '--uat']).done;
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Signing in to AppShare\.\.\./);
+    assert.match(r.stdout, /Uploading to AppShare\.\.\./);
+    const [first] = sb.uploadCalls();
+    assert.equal(first.provider, 'appshare');
+    assert.equal(first.expiresInDays, 90);
+    assert.deepEqual(first.meta, { version: '1.2.3', buildNumber: '7', bundleId: 'com.example.demo' });
+    assert.equal(first.name, 'DemoApp Android Staging');
+
+    r = await spawnShip(sb, [...ANDROID_CI, '--uat', '--expires-in-days', 'never', '--output-json', sb.resultPath]).done;
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(sb.uploadCalls()[1].expiresInDays, 'never');
+    assert.equal(sb.readResult().request.expiresInDays, 'never');
+
+    r = await spawnShip(sb, [...ANDROID_CI, '--uat', '--expires-in-days=7']).done;
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(sb.uploadCalls()[2].expiresInDays, 7);
+    assertClean(sb);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('AppShare: invalid expiry, or expiry with another provider, is a usage error before building', async () => {
+  const sb = makeSandbox();
+  try {
+    for (const args of [['--expires-in-days', '45'], ['--expires-in-days'], ['--provider', 'shareipa', '--expires-in-days', '30']]) {
+      const r = await spawnShip(sb, [...ANDROID_CI, '--uat', ...args, '--output-json', sb.resultPath]).done;
+      assert.equal(r.code, 2, `${args}: ${r.stderr}`);
+      assert.match(r.stderr, /expires-in-days/);
+      assert.doesNotMatch(r.stdout, /Building/);
+      assert.equal(sb.readResult().error.code, 'USAGE');
+    }
+    assert.deepEqual(sb.uploadCalls(), []);
+    assertClean(sb);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('AppShare: a failed sign-in stops the run before the build (exit 1, UPLOAD_AUTH_FAILED)', async () => {
+  const sb = makeSandbox();
+  try {
+    const r = await spawnShip(sb, [...ANDROID_CI, '--prod', '--output-json', sb.resultPath], { env: { SHIP_TEST_PREFLIGHT: 'fail' } }).done;
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /AppShare sign-in failed/);
+    assert.doesNotMatch(r.stdout, /Building/, 'no build after a failed sign-in');
+    const doc = sb.readResult();
+    assert.equal(doc.error.code, 'UPLOAD_AUTH_FAILED');
+    assert.equal(doc.error.phase, 'preflight');
+    assert.deepEqual(sb.uploadCalls(), []);
     assertClean(sb);
   } finally {
     sb.cleanup();

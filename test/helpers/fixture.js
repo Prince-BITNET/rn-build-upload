@@ -53,7 +53,7 @@ function makeSandbox({ android = true, ios = false, isUAT = true, git = false } 
   if (android) {
     const appDir = path.join(project, 'android', 'app');
     fs.mkdirSync(path.join(appDir, 'src', 'main', 'res', 'values'), { recursive: true });
-    fs.writeFileSync(path.join(appDir, 'build.gradle'), 'android {\n  defaultConfig {\n    versionCode 7\n    versionName "1.2.3"\n  }\n}\n');
+    fs.writeFileSync(path.join(appDir, 'build.gradle'), 'android {\n  defaultConfig {\n    applicationId "com.example.demo"\n    versionCode 7\n    versionName "1.2.3"\n  }\n}\n');
     fs.writeFileSync(path.join(appDir, 'src', 'main', 'res', 'values', 'strings.xml'), '<resources><string name="app_name">Demo App</string></resources>');
     writeExecutable(
       path.join(project, 'android', 'gradlew'),

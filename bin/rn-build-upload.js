@@ -4,14 +4,16 @@
  * (Installed as `ship`, with `rn-build-upload` as an alias.)
  *
  * Usage:
- *   ship [--platform android|ios|android,ios] [--uat | --prod] [--provider betadrop|shareipa] [--verbose] [--ci] [--output-json <path>] [--check]
+ *   ship [--platform android|ios|android,ios] [--uat | --prod] [--provider appshare|shareipa|betadrop]
+ *        [--expires-in-days <days|never>] [--verbose] [--ci] [--output-json <path>] [--check]
  *
  *     no flags   Ask which platform(s) first, then which environment
  *     --platform android|ios  Skip the platform prompt
  *     --platform android,ios  Both platforms in one run (Sequential or Parallel)
  *     --uat      Stag backend (isUAT=true)
  *     --prod     Prod backend (isUAT=false)
- *     --provider shareipa|betadrop  Upload provider (default: shareipa)
+ *     --provider appshare|shareipa|betadrop  Upload provider (default: appshare)
+ *     --expires-in-days <days|never>  AppShare link lifetime (default: 90)
  *     --verbose  Stream the full build output (default shows a compact live view)
  *     --ci       Plain non-interactive output for scripts/CI (requires --platform
  *                and --uat|--prod; never prompts, never uses the clipboard)
@@ -21,8 +23,8 @@
  * Flow: detect the project -> set isUAT in src/Helper/APPConfig.js (restored
  * after the build, even on Ctrl+C) -> build (Gradle release APK or Xcode
  * release IPA via the release-* scheme) -> verify (apksigner for Android
- * APKs, fail closed) -> upload (ShareIPA by default; BetaDrop with
- * --provider betadrop; both with live upload progress) -> Markdown -> pbcopy
+ * APKs, fail closed) -> upload (AppShare by default; ShareIPA / BetaDrop
+ * with --provider; all with live upload progress) -> Markdown -> pbcopy
  * (never with --ci). One run per checkout at a time (project lock).
  *
  * Per-project convenience scripts, e.g.:
@@ -32,7 +34,8 @@
  * One-time setup per machine:
  *   npm i -g github:Prince-BITNET/rn-build-upload
  *
- * ShareIPA (the default) needs no setup at all. BetaDrop (--provider
+ * AppShare (the default) needs APPSHARE_EMAIL and APPSHARE_PASSWORD.
+ * ShareIPA (--provider shareipa) needs no setup. BetaDrop (--provider
  * betadrop) needs one of:
  *   npx -y @betadrop/cli@0.4.0 login                (interactive, recommended)
  *   export BETADROP_TOKEN=bd_live_xxxx              (token from betadrop.app)
@@ -194,7 +197,7 @@ async function main() {
     renderUsageError(usageErr, ENTRY);
     return;
   }
-  recorder.setRequest({ platforms: parsed.platforms, provider: parsed.provider, ci: parsed.ci });
+  recorder.setRequest({ platforms: parsed.platforms, provider: parsed.provider, ci: parsed.ci, expiresInDays: parsed.expiresInDays });
 
   /* CI argument validation up front: before any lock, git call or build
    * tool runs. (resolvePlatforms / resolveEnvName enforce the same.) */
@@ -257,6 +260,7 @@ async function main() {
     ci: parsed.ci,
     introShown: !parsed.ci,
     provider: parsed.provider,
+    expiresInDays: parsed.expiresInDays,
     recorder,
   });
 }

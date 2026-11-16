@@ -1,8 +1,9 @@
 # rn-build-upload → `ship`
 
 Build a React Native **release APK / IPA** (staging or production) and upload it to
-[ShareIPA](https://www.shareipa.com) (the default — no setup) or
-[BetaDrop](https://betadrop.app) (with `--provider betadrop`), then copy the
+[AppShare](https://appshare.qubebiz.com) (the default — needs an AppShare login),
+[ShareIPA](https://www.shareipa.com) (`--provider shareipa`, no setup) or
+[BetaDrop](https://betadrop.app) (`--provider betadrop`), then copy the
 share message to the clipboard.
 
 Installs the short `ship` command (`rn-build-upload` stays available as an alias).
@@ -44,7 +45,16 @@ npm i -g github:Prince-BITNET/rn-build-upload
 
 This installs `ship` (and the `rn-build-upload` alias).
 
-Nothing else is needed for the default provider (ShareIPA). BetaDrop
+The default provider, AppShare, needs your AppShare login in two environment
+variables (accounts are created by the AppShare admin; add these to
+`~/.zshrc`, or to masked CI variables):
+
+```bash
+export APPSHARE_EMAIL=you@example.com
+export APPSHARE_PASSWORD='your-appshare-password'
+```
+
+ShareIPA (`--provider shareipa`) needs nothing. BetaDrop
 (`--provider betadrop`) needs one-time auth (pick one):
 
 ```bash
@@ -57,10 +67,11 @@ export BETADROP_TOKEN=bd_live_xxxx      # or a token from betadrop.app -> Settin
 Run it from anywhere inside a project:
 
 ```bash
-ship                                  # pick platform(s), then environment (ShareIPA by default)
+ship                                  # pick platform(s), then environment (AppShare by default)
 ship --platform ios                   # skip the platform question
 ship --platform android --uat --ci --output-json build.json   # non-interactive (CI)
 ship --platform android,ios --uat     # both platforms in one run (asks Sequential/Parallel)
+ship --platform android --uat --expires-in-days 30  # AppShare link that lasts 30 days
 ship --platform android --uat --provider betadrop   # upload to BetaDrop instead
 ship --check                          # show what the tool detects, build nothing
 ```
@@ -69,7 +80,8 @@ ship --check                          # show what the tool detects, build nothin
 | --- | --- |
 | `--platform android\|ios\|android,ios` | Pick one or both platforms (required with `--ci`; CI runs both sequentially) |
 | `--uat` / `--prod` | Staging (`isUAT=true`) / Production (`isUAT=false`) backend |
-| `--provider shareipa\|betadrop` | Upload provider — `shareipa` (default) or `betadrop` |
+| `--provider appshare\|shareipa\|betadrop` | Upload provider — `appshare` (default), `shareipa` or `betadrop` |
+| `--expires-in-days <days\|never>` | AppShare link lifetime: `1`, `3`, `7`, `14`, `30`, `90`, `365` or `never` (default **90**). AppShare only |
 | `--verbose` | Stream the full Gradle / xcodebuild output (sequential/single; parallel uses the compact view) |
 | `--ci` | Plain, line-oriented output for scripts and CI — needs `--platform` and `--uat`/`--prod`; never prompts, never uses the clipboard ([CI mode](#ci-mode)) |
 | `--output-json <path>` | Write the machine-readable run result to `<path>` ([CI result JSON](#ci-result-json)) |
@@ -90,8 +102,8 @@ that question appears **only** when both are selected:
 Either way the clipboard gets **both** lines:
 
 ```text
-Alfa-PTE (PROD): [Android Build Link](https://install.shareipa.com/xxxxxx)
-Alfa-PTE (PROD): [iOS Build Link](https://install.shareipa.com/yyyyyy)
+Alfa-PTE (PROD): [Android Build Link](https://appshare.qubebiz.com/s/xxxxxxxxxx)
+Alfa-PTE (PROD): [iOS Build Link](https://appshare.qubebiz.com/s/yyyyyyyyyy)
 ```
 
 If only one checkbox is selected, `ship` behaves exactly like before — no
@@ -113,15 +125,40 @@ Then `bun ship` / `npm run ship` (note: `bun build` alone is Bun's bundler).
 
 ## Upload providers
 
-`ship` uses **ShareIPA** unless `--provider betadrop` is given; `--provider shareipa`
-is also accepted and means the same as the default.
+`ship` uses **AppShare** unless `--provider shareipa` or `--provider betadrop`
+is given.
 
 | Provider | Setup | Upload |
 | --- | --- | --- |
-| `shareipa` (default) | none | ShareIPA website flow, **unofficial** |
+| `appshare` (default) | `APPSHARE_EMAIL` + `APPSHARE_PASSWORD` | AppShare web API (the same calls the web app makes) |
+| `shareipa` | none | ShareIPA website flow, **unofficial** |
 | `betadrop` | one-time `npx -y @betadrop/cli@0.4.0 login` (or `BETADROP_TOKEN`) | official CLI (pinned **0.4.0**), official API |
 
-### ShareIPA (default)
+### AppShare (default)
+
+Uploads to [appshare.qubebiz.com](https://appshare.qubebiz.com) through the
+same API its web upload page uses:
+
+1. Sign in (`POST /api/auth/login`) with `APPSHARE_EMAIL` / `APPSHARE_PASSWORD`.
+   This happens **before the build starts**, so wrong or missing credentials
+   fail in seconds (exit `1`, `UPLOAD_AUTH_FAILED`) instead of after a
+   10-minute build.
+2. Start a multipart upload, `PUT` the parts straight to AppShare's storage
+   (4 at a time, 3 tries per part, live byte progress), then complete it.
+3. Publish the build with its name (`AlfaPTE Android Staging`), version,
+   build number, bundle/package ID (`applicationId` / `PRODUCT_BUNDLE_IDENTIFIER`),
+   release notes and expiry. A failed or cancelled upload is deleted again.
+
+Link: **`https://appshare.qubebiz.com/s/<slug>`** — copied in the share
+message. Links expire after **90 days** by default; change it per run with
+`--expires-in-days` (`1`, `3`, `7`, `14`, `30`, `90`, `365` or `never`, the
+same choices as the AppShare upload form). Install pages are not
+password-protected and no app icon is sent (AppShare shows its placeholder).
+The credentials, session cookie and storage upload URLs are never printed.
+Like ShareIPA, this API is not a documented public API: if AppShare changes
+its web app, uploads can break until `ship` is updated.
+
+### ShareIPA (`--provider shareipa`)
 
 Uploads through the same public website flow the ShareIPA browser UI uses —
 no account, no login, no token to configure:
@@ -182,7 +219,11 @@ first run in a project.
 
 ## Behaviour
 
-- ShareIPA (the default) shows a live bar with real byte progress from its
+- AppShare (the default) signs in before building, shows a live bar with real
+  byte progress while the parts upload, then "Processing on AppShare…" while
+  the build is published; links last 90 days unless `--expires-in-days` says
+  otherwise.
+- ShareIPA (`--provider shareipa`) shows a live bar with real byte progress from its
   direct HTTP PUT, switches to "Processing on ShareIPA…" while the build is
   registered, and produces a 7-day install link.
 - BetaDrop (`--provider betadrop`) uploads through the official
@@ -253,7 +294,7 @@ exit path, including failures and cancellation.
     "commitSha": "5b20fc1…(40 hex)",
     "workingTreeDirty": false
   },
-  "request": { "platforms": ["android"], "environment": "uat", "provider": "shareipa", "ci": true },
+  "request": { "platforms": ["android"], "environment": "uat", "provider": "appshare", "ci": true, "expiresInDays": 90 },
   "startedAt": "2026-10-24T10:00:00.000Z",
   "finishedAt": "2026-10-24T10:09:12.345Z",
   "durationMs": 552345,
@@ -268,7 +309,7 @@ exit path, including failures and cancellation.
         "sha256": "…(64 hex)",
         "signature": { "verified": true, "schemes": ["v2", "v3"], "verifier": "build-tools 36.0.0" }
       },
-      "artifactUrl": "https://install.shareipa.com/xxxxxx",
+      "artifactUrl": "https://appshare.qubebiz.com/s/xxxxxxxxxx",
       "durations": { "buildMs": 480000, "uploadMs": 65000 },
       "error": null
     }
@@ -284,6 +325,7 @@ exit path, including failures and cancellation.
 | `error` | `null` on success, else `{ code, message, phase, platform }` for the first failure |
 | `project.commitSha` / `workingTreeDirty` | `git rev-parse HEAD` / `git status --porcelain` of the project, read before `APPConfig.js` is patched; `null` when not a git checkout |
 | `request.environment` | `uat` / `prod` as requested (`null` if never resolved) |
+| `request.expiresInDays` | AppShare link lifetime in days, or `"never"`; `null` for other providers |
 | `platforms[].status` | `success`, `failure`, `cancelled`, or `skipped` (never started, e.g. iOS after an Android failure) |
 | `platforms[].artifactUrl` | set **only** after that platform's upload returned a link; `null` otherwise. In a two-platform run, a platform that really uploaded keeps its link even if the other failed (overall `outcome` is then `failure`) |
 | `platforms[].artifact.sha256` | SHA-256 of the exact file that was uploaded: a private snapshot of the APK (the same bytes apksigner verified) or the staged IPA |
@@ -294,6 +336,7 @@ exit path, including failures and cancellation.
 `LOCKED`, `LOCK_FAILED`, `PROJECT_SETTINGS_FAILED`, `ENV_CONFIG_INVALID`,
 `BUILD_FAILED`, `ARTIFACT_NOT_FOUND`, `ARTIFACT_INVALID`, `APK_UNSIGNED`,
 `APK_SIGNATURE_INVALID`, `APK_VERIFY_UNAVAILABLE`, `UPLOAD_FAILED`,
+`UPLOAD_AUTH_FAILED` (AppShare sign-in, checked before the build),
 `UPLOAD_NO_URL`, `CANCELLED`, `INCOMPLETE`, `INTERNAL`. Only these are emitted
 (a raw system error code such as `ENOENT` is reported as the failing phase's
 code); treat any unrecognised future code as a failure.
@@ -371,7 +414,7 @@ be reused by an unrelated process within that second; this is accepted.
 npm test
 ```
 
-Runs the mocked test suite — it never touches ShareIPA or BetaDrop (API calls
+Runs the mocked test suite — it never touches AppShare, ShareIPA or BetaDrop (API calls
 use fake fetch implementations, the presigned PUT runs against a local HTTP
 server, and the spawn-level CLI tests in `test/cli.test.js` run the real
 `ship` entry point in throwaway projects with stand-in `gradlew`,
