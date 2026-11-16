@@ -1,0 +1,1 @@
+{"action": "create", "reason": "Project-specific contract for the rn-build-upload `ship` CLI's CI mode, which the CI hardening work established and future edits must keep stable.", "evidence": "references/evidence-17f99339.md"}

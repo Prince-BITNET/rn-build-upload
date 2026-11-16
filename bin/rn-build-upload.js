@@ -4,7 +4,7 @@
  * (Installed as `ship`, with `rn-build-upload` as an alias.)
  *
  * Usage:
- *   ship [--platform android|ios|android,ios] [--uat | --prod] [--provider betadrop|shareipa] [--verbose] [--ci] [--check]
+ *   ship [--platform android|ios|android,ios] [--uat | --prod] [--provider betadrop|shareipa] [--verbose] [--ci] [--output-json <path>] [--check]
  *
  *     no flags   Ask which platform(s) first, then which environment
  *     --platform android|ios  Skip the platform prompt
@@ -13,14 +13,17 @@
  *     --prod     Prod backend (isUAT=false)
  *     --provider shareipa|betadrop  Upload provider (default: shareipa)
  *     --verbose  Stream the full build output (default shows a compact live view)
- *     --ci       Plain non-interactive output for scripts/CI (requires --platform)
+ *     --ci       Plain non-interactive output for scripts/CI (requires --platform
+ *                and --uat|--prod; never prompts, never uses the clipboard)
+ *     --output-json <path>  Write the machine-readable run result (README)
  *     --check    Print the detected project profile and exit (no build, no upload)
  *
  * Flow: detect the project -> set isUAT in src/Helper/APPConfig.js (restored
  * after the build, even on Ctrl+C) -> build (Gradle release APK or Xcode
- * release IPA via the release-* scheme) -> upload (ShareIPA by default;
- * BetaDrop with --provider betadrop; both with live upload progress) ->
- * Markdown -> pbcopy.
+ * release IPA via the release-* scheme) -> verify (apksigner for Android
+ * APKs, fail closed) -> upload (ShareIPA by default; BetaDrop with
+ * --provider betadrop; both with live upload progress) -> Markdown -> pbcopy
+ * (never with --ci). One run per checkout at a time (project lock).
  *
  * Per-project convenience scripts, e.g.:
  *   "ship": "rn-build-upload",
@@ -31,16 +34,19 @@
  *
  * ShareIPA (the default) needs no setup at all. BetaDrop (--provider
  * betadrop) needs one of:
- *   npx -y @betadrop/cli login                      (interactive, recommended)
+ *   npx -y @betadrop/cli@0.4.0 login                (interactive, recommended)
  *   export BETADROP_TOKEN=bd_live_xxxx              (token from betadrop.app)
  */
 
 const { detectProject } = require('../lib/detect');
 const {
-  EXIT_FAILED,
+  EXIT_RESULT_WRITE,
   EXIT_USAGE,
+  exitCodeFor,
+  installSignalHandlers,
   p,
   parseArgs,
+  peekOutputJson,
   plain,
   renderStepError,
   renderUsageError,
@@ -48,6 +54,9 @@ const {
   run,
   usageText,
 } = require('../lib/build-upload');
+const lifecycle = require('../lib/lifecycle');
+const { StepError } = require('../lib/errors');
+const { createRecorder, prepareOutputPath, readGitInfo } = require('../lib/result');
 const { createAndroidAdapter } = require('../lib/platforms/android');
 const { createIosAdapter } = require('../lib/platforms/ios');
 
@@ -72,7 +81,31 @@ function failPlain(err) {
   plain.fail(err.message);
   if (err.details) plain.fail(err.details);
   if (err.hint) plain.fail(err.hint);
-  process.exit(err.usage ? EXIT_USAGE : EXIT_FAILED);
+  process.exit(err.usage ? EXIT_USAGE : exitCodeFor(err));
+}
+
+/**
+ * Result recorder for --output-json. The file is written by an 'exit'
+ * finalizer, after APPConfig restore, temp cleanup and unlock, so it carries
+ * the real exit code and any cleanup warnings — on every exit path.
+ */
+function removeStaleResult(outputJson) {
+  if (!outputJson) return;
+  try {
+    prepareOutputPath(outputJson);
+  } catch (err) {
+    /* nothing usable at that path */
+  }
+}
+
+function setUpRecorder(outputJson) {
+  if (!outputJson) return createRecorder();
+  const resolved = prepareOutputPath(outputJson);
+  const recorder = createRecorder({ outputPath: resolved });
+  lifecycle.addFinalizer((code) =>
+    recorder.write(code, { extraWarnings: lifecycle.cleanupWarnings(), writeFailedCode: EXIT_RESULT_WRITE }),
+  );
+  return recorder;
 }
 
 /** Print the detected profile (and version, when readable) — no side effects. */
@@ -119,25 +152,70 @@ async function check(profile, requestedPlatforms) {
 }
 
 async function main() {
+  /* Before anything else: a signal must still run the exit hooks. */
+  installSignalHandlers();
+  const argv = process.argv.slice(2);
   let parsed;
   try {
-    parsed = parseArgs(process.argv.slice(2), { allowPlatform: true });
+    parsed = parseArgs(argv, { allowPlatform: true });
   } catch (err) {
+    /* Still report the usage error when the result path itself was readable. */
+    const outputJson = peekOutputJson(argv);
+    if (outputJson) {
+      try {
+        setUpRecorder(outputJson).fail(err, { phase: 'args' });
+      } catch (setupErr) {
+        /* unusable path: the usage error below is all we can report */
+      }
+    }
+    if (argv.includes('--ci')) failPlain(err);
     renderUsageError(err, ENTRY);
     return;
   }
   if (parsed.help) {
+    /* No result is written for --help, but a stale one must not survive. */
+    removeStaleResult(peekOutputJson(argv));
     console.log(usageText(ENTRY));
     process.exit(0);
+  }
+
+  let recorder;
+  try {
+    if (parsed.check) {
+      /* --check never writes a result; it only removes a stale one. */
+      if (parsed.outputJson) prepareOutputPath(parsed.outputJson);
+      recorder = createRecorder();
+    } else {
+      recorder = setUpRecorder(parsed.outputJson);
+    }
+  } catch (err) {
+    const usageErr = Object.assign(new Error(err.message), { usage: true });
+    if (parsed.ci) failPlain(usageErr);
+    renderUsageError(usageErr, ENTRY);
+    return;
+  }
+  recorder.setRequest({ platforms: parsed.platforms, provider: parsed.provider, ci: parsed.ci });
+
+  /* CI argument validation up front: before any lock, git call or build
+   * tool runs. (resolvePlatforms / resolveEnvName enforce the same.) */
+  if (parsed.ci && !parsed.check && !parsed.envName) {
+    const err = new StepError('Missing environment flag.', { usage: true, details: 'Pass --uat or --prod with --ci.' });
+    recorder.fail(err, { phase: 'args' });
+    failPlain(err);
   }
 
   let profile;
   try {
     profile = detectProject(process.cwd());
   } catch (err) {
+    recorder.fail(err, { phase: 'detect' });
     if (parsed.ci || parsed.check) failPlain(err);
     renderStepError(err, {}, {});
     return;
+  }
+  if (recorder.enabled) {
+    /* Read before APPConfig.js is patched, so "dirty" reflects the caller's tree. */
+    recorder.setProject({ name: profile.appName, root: profile.root, ...readGitInfo(profile.root) });
   }
 
   if (parsed.check) {
@@ -152,6 +230,7 @@ async function main() {
     if (!parsed.ci) p.intro(`${profile.appName}  ·  Build & Distribution`);
     platforms = await resolvePlatforms(profile, parsed.platforms, parsed.ci);
   } catch (err) {
+    recorder.fail(err, { phase: 'args' });
     if (parsed.ci) failPlain(err);
     renderUsageError(err, ENTRY);
     return;
@@ -166,6 +245,7 @@ async function main() {
       adapters.push(PLATFORMS[key].create(profile));
     }
   } catch (err) {
+    recorder.fail(err, { phase: 'platform', platform: creating });
     if (parsed.ci) failPlain(err);
     renderStepError(err, {}, PLATFORMS[creating]);
     return;
@@ -177,6 +257,7 @@ async function main() {
     ci: parsed.ci,
     introShown: !parsed.ci,
     provider: parsed.provider,
+    recorder,
   });
 }
 
