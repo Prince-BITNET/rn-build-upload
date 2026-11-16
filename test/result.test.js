@@ -38,7 +38,7 @@ test('successful run serializes the documented fields', () => {
   assert.equal(doc.exitCode, 0);
   assert.equal(doc.error, null);
   assert.deepEqual(doc.project, { name: 'DemoApp', root: '/tmp/demo', commitSha: 'a'.repeat(40), workingTreeDirty: false });
-  assert.deepEqual(doc.request, { platforms: ['android'], environment: 'uat', provider: 'shareipa', ci: true });
+  assert.deepEqual(doc.request, { platforms: ['android'], environment: 'uat', provider: 'shareipa', ci: true, expiresInDays: null });
   assert.equal(doc.platforms.length, 1);
   const [android] = doc.platforms;
   assert.equal(android.status, 'success');

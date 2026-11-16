@@ -16,11 +16,11 @@ const { parseArgs, runPlain, PROVIDERS, DEFAULT_PROVIDER, resolvePlatforms, reso
 /* --provider parsing                                                */
 /* ---------------------------------------------------------------- */
 
-test('parseArgs defaults to the ShareIPA provider (single source of truth)', () => {
-  assert.equal(DEFAULT_PROVIDER, 'shareipa');
+test('parseArgs defaults to the AppShare provider (single source of truth)', () => {
+  assert.equal(DEFAULT_PROVIDER, 'appshare');
   assert.equal(parseArgs([], { allowPlatform: true }).provider, DEFAULT_PROVIDER);
-  assert.equal(parseArgs(['--platform', 'android', '--uat'], { allowPlatform: true }).provider, 'shareipa');
-  assert.equal(parseArgs(['--ci'], { allowPlatform: true }).provider, 'shareipa');
+  assert.equal(parseArgs(['--platform', 'android', '--uat'], { allowPlatform: true }).provider, 'appshare');
+  assert.equal(parseArgs(['--ci'], { allowPlatform: true }).provider, 'appshare');
 });
 
 test('parseArgs accepts --provider shareipa in both forms, case-insensitively', () => {
@@ -203,12 +203,12 @@ function iosAdapter() {
   };
 }
 
-test('runPlain uses ShareIPA (the default) when no provider is given', async () => {
+test('runPlain uses AppShare (the default) when no provider is given', async () => {
   const calls = [];
-  const original = PROVIDERS.shareipa.upload;
-  PROVIDERS.shareipa.upload = async (profile, filePath, name, notes, opts) => {
+  const original = PROVIDERS.appshare.upload;
+  PROVIDERS.appshare.upload = async (profile, filePath, name, notes, opts) => {
     calls.push({ name, notes, opts });
-    return { url: 'https://install.shareipa.com/TESTID', timing: { transferMs: 5, serverMs: 1 } };
+    return { url: 'https://appshare.qubebiz.com/s/TESTID', timing: { transferMs: 5, serverMs: 1 } };
   };
 
   try {
@@ -224,8 +224,8 @@ test('runPlain uses ShareIPA (the default) when no provider is given', async () 
       }),
     );
     const out = stdout.join('\n');
-    assert.match(out, /Uploading to ShareIPA\.\.\./);
-    assert.ok(out.includes('Demo-App (PROD): [iOS Build Link](https://install.shareipa.com/TESTID)'));
+    assert.match(out, /Uploading to AppShare\.\.\./);
+    assert.ok(out.includes('Demo-App (PROD): [iOS Build Link](https://appshare.qubebiz.com/s/TESTID)'));
     assert.doesNotMatch(out, /clipboard/i, 'CI mode never uses the clipboard');
     assert.ok(stdout[stdout.length - 1].includes('Build Link]('), `share message must be the last stdout line:\n${out}`);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
@@ -233,7 +233,7 @@ test('runPlain uses ShareIPA (the default) when no provider is given', async () 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].opts.ci, true);
   } finally {
-    PROVIDERS.shareipa.upload = original;
+    PROVIDERS.appshare.upload = original;
   }
 });
 
