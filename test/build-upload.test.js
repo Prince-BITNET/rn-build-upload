@@ -172,7 +172,8 @@ test('runPlain --ci keeps line-oriented output and routes through the selected p
       out.includes('DemoApp (STAG): [Android Build Link](https://install.shareipa.com/TESTID)'),
       `share message missing from CI output:\n${out}`,
     );
-    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.doesNotMatch(out, /clipboard/i, 'CI mode never uses the clipboard');
+    assert.ok(stdout[stdout.length - 1].includes('Build Link]('), `share message must be the last stdout line:\n${out}`);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
     assert.equal(stderr.join(''), '');
     assert.deepEqual(builds, [false]);
@@ -225,7 +226,8 @@ test('runPlain uses ShareIPA (the default) when no provider is given', async () 
     const out = stdout.join('\n');
     assert.match(out, /Uploading to ShareIPA\.\.\./);
     assert.ok(out.includes('Demo-App (PROD): [iOS Build Link](https://install.shareipa.com/TESTID)'));
-    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.doesNotMatch(out, /clipboard/i, 'CI mode never uses the clipboard');
+    assert.ok(stdout[stdout.length - 1].includes('Build Link]('), `share message must be the last stdout line:\n${out}`);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
     assert.equal(stderr.join(''), '');
     assert.equal(calls.length, 1);
@@ -259,7 +261,8 @@ test('runPlain --ci --provider betadrop uses BetaDrop and keeps the line-oriente
     const out = stdout.join('\n');
     assert.match(out, /Uploading to BetaDrop\.\.\./);
     assert.ok(out.includes('Demo-App (PROD): [iOS Build Link](https://betadrop.app/i/TESTID)'));
-    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.doesNotMatch(out, /clipboard/i, 'CI mode never uses the clipboard');
+    assert.ok(stdout[stdout.length - 1].includes('Build Link]('), `share message must be the last stdout line:\n${out}`);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
     assert.equal(stderr.join(''), '');
     assert.equal(calls.length, 1);
@@ -296,7 +299,7 @@ function makePlainAdapter(key, label, artifactWord, fileName) {
   };
 }
 
-test('runPlain builds both platforms sequentially and copies both links (--ci)', async () => {
+test('runPlain builds both platforms sequentially and prints both links (--ci)', async () => {
   const calls = [];
   const original = PROVIDERS.shareipa.upload;
   let n = 0;
@@ -337,7 +340,8 @@ test('runPlain builds both platforms sequentially and copies both links (--ci)',
     const second = out.indexOf('Demo-App (STAG): [iOS Build Link](https://install.shareipa.com/LINK2)');
     assert.ok(first !== -1 && second !== -1 && first < second, `both links missing or out of order:\n${out}`);
 
-    assert.match(out, /(Copied to clipboard|Clipboard unavailable)/);
+    assert.doesNotMatch(out, /clipboard/i, 'CI mode never uses the clipboard');
+    assert.ok(stdout[stdout.length - 1].includes('Build Link]('), `share message must be the last stdout line:\n${out}`);
     assert.ok(!out.includes('\u001b['), 'CI output must not contain ANSI escape codes');
     assert.equal(stderr.join(''), '');
 
