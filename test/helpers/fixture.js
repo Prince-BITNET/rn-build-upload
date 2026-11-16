@@ -55,6 +55,12 @@ function makeSandbox({ android = true, ios = false, isUAT = true, git = false } 
     fs.mkdirSync(path.join(appDir, 'src', 'main', 'res', 'values'), { recursive: true });
     fs.writeFileSync(path.join(appDir, 'build.gradle'), 'android {\n  defaultConfig {\n    applicationId "com.example.demo"\n    versionCode 7\n    versionName "1.2.3"\n  }\n}\n');
     fs.writeFileSync(path.join(appDir, 'src', 'main', 'res', 'values', 'strings.xml'), '<resources><string name="app_name">Demo App</string></resources>');
+    /* launcher icon: hdpi and xxhdpi bitmaps; discovery must pick xxhdpi */
+    fs.writeFileSync(path.join(appDir, 'src', 'main', 'AndroidManifest.xml'), '<manifest>\n  <application\n    android:label="@string/app_name"\n    android:icon="@mipmap/ic_launcher">\n  </application>\n</manifest>\n');
+    for (const d of ['mipmap-hdpi', 'mipmap-xxhdpi']) {
+      fs.mkdirSync(path.join(appDir, 'src', 'main', 'res', d), { recursive: true });
+      fs.writeFileSync(path.join(appDir, 'src', 'main', 'res', d, 'ic_launcher.png'), 'png');
+    }
     writeExecutable(
       path.join(project, 'android', 'gradlew'),
       [
@@ -86,6 +92,11 @@ function makeSandbox({ android = true, ios = false, isUAT = true, git = false } 
     fs.mkdirSync(path.join(iosDir, 'Demo.xcworkspace'), { recursive: true });
     fs.mkdirSync(path.join(iosDir, 'Demo.xcodeproj', 'xcshareddata', 'xcschemes'), { recursive: true });
     fs.writeFileSync(path.join(iosDir, 'Demo.xcodeproj', 'xcshareddata', 'xcschemes', 'release-demo.xcscheme'), '<Scheme/>');
+    /* AppIcon set: discovery must pick the largest (1024 marketing icon) */
+    const iconSet = path.join(iosDir, 'Demo', 'Images.xcassets', 'AppIcon.appiconset');
+    fs.mkdirSync(iconSet, { recursive: true });
+    fs.writeFileSync(path.join(iconSet, 'Contents.json'), JSON.stringify({ images: [{ size: '60x60', scale: '3x', filename: '180.png' }, { size: '1024x1024', scale: '1x', filename: '1024.png' }, { size: '20x20', scale: '2x' }] }));
+    for (const f of ['180.png', '1024.png']) fs.writeFileSync(path.join(iconSet, f), 'png');
     const settings = JSON.stringify([
       { buildSettings: { BUILT_PRODUCTS_DIR: products, FULL_PRODUCT_NAME: 'Demo.app', MARKETING_VERSION: '2.0', CURRENT_PROJECT_VERSION: '5' } },
     ]);

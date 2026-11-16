@@ -147,13 +147,21 @@ same API its web upload page uses:
    (4 at a time, 3 tries per part, live byte progress), then complete it.
 3. Publish the build with its name (`AlfaPTE Android Staging`), version,
    build number, bundle/package ID (`applicationId` / `PRODUCT_BUNDLE_IDENTIFIER`),
-   release notes and expiry. A failed or cancelled upload is deleted again.
+   app icon, release notes and expiry. A failed or cancelled upload is deleted again.
 
 Link: **`https://appshare.qubebiz.com/s/<slug>`** — copied in the share
 message. Links expire after **90 days** by default; change it per run with
 `--expires-in-days` (`1`, `3`, `7`, `14`, `30`, `90`, `365` or `never`, the
 same choices as the AppShare upload form). Install pages are not
-password-protected and no app icon is sent (AppShare shows its placeholder).
+password-protected.
+
+The app icon comes from the project itself: on Android the densest
+`mipmap-*`/`drawable-*` bitmap named by `android:icon` in
+`AndroidManifest.xml`, on iOS the largest image in
+`<App>/Images.xcassets/AppIcon.appiconset`. macOS `sips` converts it to a PNG
+of at most 256 px (never upscaled), the same as AppShare's web page sends. A
+project without such an icon (e.g. vector-only) uploads with AppShare's
+placeholder; a missing icon never fails an upload.
 The credentials, session cookie and storage upload URLs are never printed.
 Like ShareIPA, this API is not a documented public API: if AppShare changes
 its web app, uploads can break until `ship` is updated.
