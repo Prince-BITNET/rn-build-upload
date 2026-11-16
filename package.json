@@ -1,6 +1,6 @@
 {
   "name": "rn-build-upload",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Build a React Native release APK/IPA (staging or production) and upload it to BetaDrop or ShareIPA, then copy the share message to the clipboard.",
   "license": "UNLICENSED",
